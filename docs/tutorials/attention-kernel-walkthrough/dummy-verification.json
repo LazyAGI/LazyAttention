@@ -1,0 +1,17 @@
+{
+  "length": 32768,
+  "blocks": 32,
+  "documents": 8,
+  "ranges": 69,
+  "range_mismatches": 0,
+  "overlap_pairs": 0,
+  "visible_pairs": 64130418,
+  "permutation_bijective": true,
+  "reorder_pair_checks": 100000,
+  "range_types": [
+    0,
+    1,
+    2
+  ],
+  "mask_source_sha256": "e09ff1a94d1bf96e03191bc509843c1ee60977d2443e4498bf5072abe26f47de"
+}

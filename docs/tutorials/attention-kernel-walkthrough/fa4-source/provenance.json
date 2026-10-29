@@ -1,0 +1,10 @@
+{
+  "retrieved_utc": "2026-10-21T08:56:06.164215+00:00",
+  "source": "FlashAttention CUTE implementation snapshot used by this tutorial",
+  "files": {
+    "flash_bwd_sm90.py": "4e8e5bd4518714e0de39635d0e5b09d3ceba619b731437a82ebfad1a3ef90e4c",
+    "interface.py": "0a6966d5aeccc05b626a117fb7682e64035148bb656216db5027dafc55e9bb7e",
+    "block_sparse_utils.py": "608f6c5a1c68daadfca402ec1259917019a195dc748ce9f24b92f0551d2ff6ba",
+    "flash_fwd_sm90.py": "0b7194125e722c7b2f1b9780d308cb85f381a72455d5e35e37a5f0b7c86207e5"
+  }
+}
