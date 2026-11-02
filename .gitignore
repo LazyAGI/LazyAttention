@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local operator experiment output
+results/
+*.cubin
+*.sass
+*.pt
+*.pth

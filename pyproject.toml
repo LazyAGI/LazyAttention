@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lazy-attention"
+version = "0.1.0.dev0"
+description = "Experimental Hopper sparse attention with exclusive range/index row maps"
+requires-python = ">=3.10"
+license = "Apache-2.0 AND BSD-3-Clause"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/*.txt"]
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+gpu = ["torch>=2.9", "nvidia-cutlass-dsl==4.6.2", "quack-kernels==0.5.3", "apache-tvm-ffi==0.1.13.post3", "cuda-python>=12"]
+analysis = ["scipy>=1.10"]
+
+[tool.setuptools.packages.find]
+include = ["lazy_attention*", "benchmarks*"]
