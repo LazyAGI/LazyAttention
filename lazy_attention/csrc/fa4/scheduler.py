@@ -1,12 +1,15 @@
+# SPDX-License-Identifier: BSD-3-Clause
 # Derived from FlashAttention CuTe; see licenses/flash-attention-BSD-3-Clause.txt.
 # Modified: persistent GQA4 scheduling and exclusive range/index row mapping.
 """Producer-prefetched atomic work queue for the three FA4 backward roles."""
+
 import cutlass
 import cutlass.cute as cute
 from cutlass import Int32
 from flash_attn.cute import utils
 from flash_attn.cute.tile_scheduler import WorkTileInfo
 from flash_attn.cute.block_sparse_utils import get_m_block_from_iter_bwd
+
 
 @cute.jit
 def shifted_q_tile(it, pc, pi, fc, fi, kv, span: cutlass.Constexpr[int]):
@@ -26,39 +29,78 @@ def shifted_q_tile(it, pc, pi, fc, fi, kv, span: cutlass.Constexpr[int]):
             mapped = pc + local
     return get_m_block_from_iter_bwd(mapped, pc, pi, fc, fi)
 
+
 from cutlass.cutlass_dsl import dsl_user_op
 from cutlass._mlir.dialects import llvm
+
 
 @dsl_user_op
 def subset_barrier(*, barrier_id, number_of_threads, loc=None, ip=None):
     # Unlike legacy bar.sync (.aligned), barrier.sync permits distinct role paths.
-    llvm.inline_asm(None,
-        [Int32(barrier_id).ir_value(loc=loc, ip=ip), Int32(number_of_threads).ir_value(loc=loc, ip=ip)],
-        "barrier.sync $0, $1;", "r,r,~{memory}", has_side_effects=True,
-        is_align_stack=False, asm_dialect=llvm.AsmDialect.AD_ATT)
+    llvm.inline_asm(
+        None,
+        [
+            Int32(barrier_id).ir_value(loc=loc, ip=ip),
+            Int32(number_of_threads).ir_value(loc=loc, ip=ip),
+        ],
+        "barrier.sync $0, $1;",
+        "r,r,~{memory}",
+        has_side_effects=True,
+        is_align_stack=False,
+        asm_dialect=llvm.AsmDialect.AD_ATT,
+    )
+
 
 @dsl_user_op
 def subset_arrive(*, barrier_id, number_of_threads, loc=None, ip=None):
-    cute.arch.barrier_arrive(barrier_id=barrier_id, number_of_threads=number_of_threads,
-                            aligned=False, loc=loc, ip=ip)
+    cute.arch.barrier_arrive(
+        barrier_id=barrier_id,
+        number_of_threads=number_of_threads,
+        aligned=False,
+        loc=loc,
+        ip=ip,
+    )
+
 
 class SubsetBarrier(cutlass.pipeline.NamedBarrier):
     @dsl_user_op
     def arrive_and_wait(self, *, loc=None, ip=None):
-        subset_barrier(barrier_id=self.barrier_id,number_of_threads=self.num_threads,loc=loc,ip=ip)
+        subset_barrier(
+            barrier_id=self.barrier_id,
+            number_of_threads=self.num_threads,
+            loc=loc,
+            ip=ip,
+        )
+
     @dsl_user_op
     def arrive(self, *, loc=None, ip=None):
-        subset_arrive(barrier_id=self.barrier_id,number_of_threads=self.num_threads,loc=loc,ip=ip)
+        subset_arrive(
+            barrier_id=self.barrier_id,
+            number_of_threads=self.num_threads,
+            loc=loc,
+            ip=ip,
+        )
+
 
 class PersistentScheduler:
-    def __init__(self, params, order, counter, mailbox, is_producer):
+    def __init__(self, params, order, counter, mailbox, is_producer, participants=384):
         self.params, self.order, self.counter = params, order, counter
         self.mailbox, self.is_producer = mailbox, is_producer
+        self.participants = participants
 
     @staticmethod
     @cute.jit
-    def create(params, order, counter, mailbox, is_producer: cutlass.Constexpr[bool] = False):
-        return PersistentScheduler(params, order, counter, mailbox, is_producer)
+    def create(
+        params,
+        order,
+        counter,
+        mailbox,
+        is_producer: cutlass.Constexpr[bool] = False,
+        participants: cutlass.Constexpr[int] = 384,
+    ):
+        return PersistentScheduler(
+            params, order, counter, mailbox, is_producer, participants
+        )
 
     @cute.jit
     def publish(self, index):
@@ -76,30 +118,44 @@ class PersistentScheduler:
     def prefetch_next_work(self):
         if cutlass.const_expr(self.is_producer):
             if cute.arch.lane_idx() == 0:
-                self.mailbox[4] = utils.atomic_add_i32(1, self.counter.iterator) + cute.arch.grid_dim()[0]
+                self.mailbox[4] = (
+                    utils.atomic_add_i32(1, self.counter.iterator)
+                    + cute.arch.grid_dim()[0]
+                )
 
     @cute.jit
     def initial_work_tile_info(self):
         self.publish(Int32(cute.arch.block_idx()[0]))
-        SubsetBarrier(barrier_id=13, num_threads=384).arrive_and_wait()
+        SubsetBarrier(barrier_id=13, num_threads=self.participants).arrive_and_wait()
         return self.get_current_work()
 
     @cute.jit
     def get_current_work(self):
-        return WorkTileInfo((Int32(self.mailbox[0]), Int32(self.mailbox[1]),
-                             Int32(self.mailbox[2]), Int32(0)), self.mailbox[3] != 0)
+        return WorkTileInfo(
+            (
+                Int32(self.mailbox[0]),
+                Int32(self.mailbox[1]),
+                Int32(self.mailbox[2]),
+                Int32(0),
+            ),
+            self.mailbox[3] != 0,
+        )
 
     @cute.jit
     def advance_to_next_work(self):
         cute.arch.cp_async_bulk_wait_group(0, read=True)
-        SubsetBarrier(barrier_id=12, num_threads=384).arrive_and_wait()
+        SubsetBarrier(barrier_id=12, num_threads=self.participants).arrive_and_wait()
         if cutlass.const_expr(self.is_producer):
             self.prefetch_next_work()
             self.publish(Int32(self.mailbox[4]))
-        SubsetBarrier(barrier_id=13, num_threads=384).arrive_and_wait()
+        SubsetBarrier(barrier_id=13, num_threads=self.participants).arrive_and_wait()
 
     def _objects(self):
-        return (self.params,self.order,self.counter,self.mailbox) if self.is_producer else (self.mailbox,)
+        return (
+            (self.params, self.order, self.counter, self.mailbox)
+            if self.is_producer
+            else (self.mailbox,)
+        )
 
     def __extract_mlir_values__(self):
         values, self._sizes = [], []
@@ -115,5 +171,7 @@ class PersistentScheduler:
             args.append(cutlass.new_from_mlir_values(x, values[:n]))
             values = values[n:]
         if self.is_producer:
-            return PersistentScheduler(*args, self.is_producer)
-        return PersistentScheduler(self.params,self.order,self.counter,args[0],False)
+            return PersistentScheduler(*args, self.is_producer, self.participants)
+        return PersistentScheduler(
+            self.params, self.order, self.counter, args[0], False, self.participants
+        )

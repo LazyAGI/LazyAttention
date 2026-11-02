@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Own private launcher caches without patching public FlashAttention modules."""
 import importlib.util
 import sys

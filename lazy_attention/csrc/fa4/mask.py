@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """Compact128x128 bit-mask specialization for the FA4 kernels."""
 import cutlass
 import cutlass.cute as cute

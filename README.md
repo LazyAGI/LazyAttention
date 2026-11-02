@@ -11,13 +11,13 @@ The current site explains Attention from the matrix equations to tiled Forward a
 
 ## Experimental operators (`dev`)
 
-The standalone package contains the frozen **index baseline** and the current
+The standalone package contains the **index baseline** and the current
 **paired range/index** Hopper backward kernel. No intermediate range variant
 or training-framework code is included. The website remains independent.
 
 ```text
 lazy_attention/             # explicit prepare / forward / backward API
-  csrc/fa4/                 # CuTe DSL kernels, launchers and schedulers
+  csrc/fa4/                 # shared CuTe backward/launcher; row-map policy differs
 benchmarks/                 # synthetic/replay fixtures, paired A/B and analysis
 tests/                      # CPU descriptor and Hopper numerical/graph checks
 licenses/                   # upstream kernel notices
@@ -27,6 +27,13 @@ This is a narrow experimental specialization: Hopper SM90, BF16, batch 1,
 self-attention, positive S divisible by 128, head dimension 128, and four Q heads
 per KV head. It exposes explicit backward rather than an autograd integration.
 Unsupported shapes fail instead of silently switching implementations.
+
+The two policies share one backward implementation, scheduler, launcher and dQ
+postprocessor. Mapping and KV scatter differences use compile-time
+`range_mapping`; no runtime variant dispatch is added to GPU code. The index
+scheduler retains 320 barrier participants, while paired scatter requires 384.
+The previous standalone implementation is preserved in commit `3047921` for
+regression comparisons; it is not duplicated in the current source tree.
 
 ### Setup
 

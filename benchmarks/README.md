@@ -9,9 +9,12 @@ GPU time. No speedup is assumed for an arbitrary synthetic case.
 ```bash
 python -m unittest tests.test_planning
 CUDA_VISIBLE_DEVICES=0 python -m tests.check_gpu
+CUDA_VISIBLE_DEVICES=0 python -m tests.check_boundaries
 ```
 
 The CPU test covers every two-range split and exclusive payload sizing. The
+additional boundary check exercises all 63 splits on GPU plus gapped and
+head-major outer strides. The
 Hopper test covers S=128/256/512, continuous/two-range/permuted/mixed maps, and
 causal/full/sparse/fully masked attention. Both backward implementations are
 checked against FP32 math, against each other, and after CUDA Graph replay.

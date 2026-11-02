@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """One-time mask/row-map preparation, outside the measured GPU backward chain."""
 from dataclasses import dataclass
 from typing import Any

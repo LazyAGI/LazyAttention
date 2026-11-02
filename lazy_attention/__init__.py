@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Experimental self-attention operators; GPU dependencies load on first use."""
 from .planning import PreparedAttention, prepare_attention, prepare_rows
 

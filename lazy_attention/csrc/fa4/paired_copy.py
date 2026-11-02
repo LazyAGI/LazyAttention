@@ -1,5 +1,5 @@
-# Derived from FlashAttention CuTe; see licenses/flash-attention-BSD-3-Clause.txt.
-# Modified: persistent GQA4 scheduling and exclusive range/index row mapping.
+# SPDX-License-Identifier: Apache-2.0
+# Project-specific row mapping/copy policy; external CuTe/QuACK APIs are dependencies.
 """One 16/4-row traversal for affine ranges and indexed fallback; paired data copies."""
 import cutlass
 import cutlass.cute as cute
