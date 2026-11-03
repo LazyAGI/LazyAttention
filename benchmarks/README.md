@@ -157,3 +157,35 @@ Additional arguments are forwarded to `benchmarks.backward`. The directory must
 be new or empty. Failures stop the suite, leave raw evidence in place, and do
 not produce a success report. Use `python -m tests.check_magi` for independent
 FP32-reference and graph-replay checks of the optional adapter.
+
+## Sparse-plan preparation
+
+`prepare_attention` packs sparse index tables on CPU and uploads each table in
+one transfer. The empty-table path preserves the original unit last stride
+required by CuTe and skips CPU packing. F-strided masks use separate axis
+reductions without copying the full mask. This changes preparation only; the
+attention kernels, Full/Partial classification and list order are unchanged.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -m tests.check_sparse_planning
+for repeat in 0 1 2; do
+  CUDA_VISIBLE_DEVICES=0 python -m benchmarks.planning \
+    --seqlen 4096 --mask causal --repeat "$repeat" \
+    --output "results/planning-$repeat.json"
+done
+python -m benchmarks.analyze results/planning-*.json
+```
+
+The default is direct A/B against the frozen row-wise constructor in
+`benchmarks.reference_sparse_plan`; unchanged protocols reuse established
+calibration. The Linux process pins itself to one available CPU and records
+that affinity. Each of 60 balanced ABBA/BAAB blocks measures 16 constructions
+per entry, including both forward/backward plans, allocations and H2D copies,
+with synchronized wall time. GPU process checks and raw block data are retained.
+Choose fresh output paths. Other inputs are `--mask full`, `empty` or `sparse`;
+`--layout f` checks a Fortran-strided CPU mask. Layout is included in the fixture
+fingerprint so analysis cannot silently pool the two layouts.
+
+The input mask is already resident on CPU. Mask encoding, row-map preparation,
+forward and attention backward are excluded. These percentages describe sparse
+list construction, not training throughput or the complete preparation API.

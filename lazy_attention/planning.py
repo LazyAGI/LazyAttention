@@ -73,26 +73,36 @@ def _aux(mask, device):
 
 
 def _sparse_plan(mask, m, n, backward, device):
+    import numpy as np
     import torch
     from flash_attn.cute.block_sparsity import BlockSparseTensorsTorch
     qblocks, kblocks = mask.shape[0] // m, mask.shape[1] // n
-    groups = kblocks if backward else qblocks
-    full, partial = [[] for _ in range(groups)], [[] for _ in range(groups)]
-    for q in range(qblocks):
-        for k in range(kblocks):
-            tile = mask[q*m:(q+1)*m, k*n:(k+1)*n]
-            group, value = (k, q) if backward else (q, k)
-            if tile.all():
-                full[group].append(value)
-            elif tile.any():
-                partial[group].append(value)
-    def tensors(rows):
-        count = torch.tensor([len(x) for x in rows], dtype=torch.int32, device=device).reshape(1,1,groups)
-        width = max(map(len, rows), default=0)
-        indices = torch.zeros((1,1,groups,width), dtype=torch.int32, device=device)
-        for g, row in enumerate(rows):
-            if row: indices[0,0,g,:len(row)] = torch.tensor(row, dtype=torch.int32, device=device)
-        return count, indices
+    tiles = mask.reshape(qblocks, m, kblocks, n)
+    if mask.strides[0] < mask.strides[1]:
+        # Separate reductions avoid NumPy's slow multi-axis strided traversal.
+        # No full-mask contiguous copy; the intermediate is tile-reduced.
+        present = tiles.any(axis=3).any(axis=1)
+        full = tiles.all(axis=3).all(axis=1)
+    else:
+        present = tiles.any(axis=(1, 3))
+        full = tiles.all(axis=(1, 3))
+    partial = present & ~full
+    if backward:
+        partial, full = partial.T, full.T
+    def tensors(flags):
+        groups = flags.shape[0]
+        counts = flags.sum(axis=1, dtype=np.int32)
+        width = int(counts.max(initial=0))
+        if width:
+            indices = np.zeros((1, 1, groups, width), dtype=np.int32)
+            # CPU-only packing; exactly two H2D transfers per nonempty list.
+            for group in range(groups):
+                indices[0, 0, group, :counts[group]] = np.flatnonzero(flags[group])
+            gpu_indices = torch.as_tensor(indices, device=device)
+        else:
+            # No CPU list packing for an empty bucket. Keep CuTe's unit stride.
+            gpu_indices = torch.empty((1, 1, groups, 0), dtype=torch.int32, device=device)
+        return (torch.as_tensor(counts.reshape(1, 1, groups), device=device), gpu_indices)
     pc, pi = tensors(partial); fc, fi = tensors(full)
     return BlockSparseTensorsTorch(mask_block_cnt=pc, mask_block_idx=pi,
         full_block_cnt=fc, full_block_idx=fi, block_size=(m,n))
