@@ -51,6 +51,7 @@ class FlashAttentionBackwardSm90:
         self.range_mapping, self.physical_ctas = range_mapping, physical_ctas
         self.persistent_producer_regs = 24
         self.q_shift = 0
+        self.planned_order = False
         self.tile_hdim = self.tile_hdimv = 128
         self.tile_m, self.tile_n = 64, 128
         self.num_threads = 384
@@ -655,6 +656,7 @@ class FlashAttentionBackwardSm90:
             aux_data.tensors[3],
             storage.task_mailbox.get_tensor(cute.make_layout(5)),
             participants=384 if self.range_mapping else 320,
+            planned=self.planned_order,
         )
         if warp_idx < 4:
             cute.arch.setmaxregister_decrease(self.num_producer_regs)

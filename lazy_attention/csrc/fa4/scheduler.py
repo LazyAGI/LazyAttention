@@ -83,10 +83,11 @@ class SubsetBarrier(cutlass.pipeline.NamedBarrier):
 
 
 class PersistentScheduler:
-    def __init__(self, params, order, counter, mailbox, is_producer, participants=384):
+    def __init__(self, params, order, counter, mailbox, is_producer, participants=384, planned=False):
         self.params, self.order, self.counter = params, order, counter
         self.mailbox, self.is_producer = mailbox, is_producer
         self.participants = participants
+        self.planned = planned
 
     @staticmethod
     @cute.jit
@@ -97,9 +98,10 @@ class PersistentScheduler:
         mailbox,
         is_producer: cutlass.Constexpr[bool] = False,
         participants: cutlass.Constexpr[int] = 384,
+        planned: cutlass.Constexpr[bool] = False,
     ):
         return PersistentScheduler(
-            params, order, counter, mailbox, is_producer, participants
+            params, order, counter, mailbox, is_producer, participants, planned
         )
 
     @cute.jit
@@ -108,9 +110,15 @@ class PersistentScheduler:
             if cute.arch.lane_idx() == 0:
                 n, h = self.params.num_block, self.params.num_head
                 valid = index < n * h
-                # Direct sequential KV-major decode, no task-order load or planner.
-                self.mailbox[0] = index // h
-                self.mailbox[1] = index % h
+                if cutlass.const_expr(self.planned):
+                    task = Int32(0)
+                    if valid:
+                        task = self.order[index]
+                    self.mailbox[0] = task // h
+                    self.mailbox[1] = task % h
+                else:
+                    self.mailbox[0] = index // h
+                    self.mailbox[1] = index % h
                 self.mailbox[2] = Int32(0)
                 self.mailbox[3] = Int32(valid)
 
@@ -171,7 +179,7 @@ class PersistentScheduler:
             args.append(cutlass.new_from_mlir_values(x, values[:n]))
             values = values[n:]
         if self.is_producer:
-            return PersistentScheduler(*args, self.is_producer, self.participants)
+            return PersistentScheduler(*args, self.is_producer, self.participants, self.planned)
         return PersistentScheduler(
-            self.params, self.order, self.counter, args[0], False, self.participants
+            self.params, self.order, self.counter, args[0], False, self.participants, self.planned
         )

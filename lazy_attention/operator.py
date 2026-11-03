@@ -21,11 +21,11 @@ def _forward_launcher():
 
 
 @lru_cache(maxsize=24)
-def _interface(variant, ctas):
+def _interface(variant, ctas, planned=False):
     if variant not in ("index", "paired"):
         raise ValueError(f"unknown variant: {variant}")
     kernel_name, interface_name = "backward", "interface"
-    suffix = f"{variant}_{ctas}"
+    suffix = f"{variant}_{ctas}_{planned}"
     kernel = private_module(
         f"lazy_attention.csrc.fa4.{kernel_name}", suffix + "_kernel"
     )
@@ -39,6 +39,7 @@ def _interface(variant, ctas):
         obj = kernel.FlashAttentionBackwardSm90(
             dtype, kw["mask_mod"], range_mapping=variant == "paired", physical_ctas=ctas
         )
+        obj.planned_order = planned
         return obj
 
     interface.FlashAttentionBackwardSm90 = factory
@@ -96,7 +97,7 @@ def forward(q, k, v, prepared, *, scale=None):
     return result[:2]
 
 
-def backward(q, k, v, out, dout, lse, prepared, *, scale=None, variant="paired"):
+def backward(q, k, v, out, dout, lse, prepared, *, scale=None, variant="paired", task_order=None):
     """Return dQ/dK/dV; preparation and forward are outside this chain.
 
     index uses the frozen full-index baseline. paired is the current exclusive
@@ -134,9 +135,15 @@ def backward(q, k, v, out, dout, lse, prepared, *, scale=None, variant="paired")
         raise ValueError("row mapping is on the wrong device")
     with _lock:
         ctas = torch.cuda.get_device_properties(q.device).multi_processor_count
-        interface = _interface(variant, ctas)
+        interface = _interface(variant, ctas, task_order is not None)
     counter = torch.zeros((1,), device=q.device, dtype=torch.int32)
-    aux = [*prepared.logical_aux, counter, counter]
+    if task_order is not None:
+        if (task_order.device != q.device or task_order.dtype != torch.int32
+                or task_order.shape != (prepared.seqlen // 128 * k.shape[2],)
+                or not task_order.is_contiguous()):
+            raise ValueError('task_order must be contiguous CUDA int32 with one ID per KV/head task')
+        task_order.__leading_dim__, task_order.__assumed_align__ = 0, 16
+    aux = [*prepared.logical_aux, task_order if task_order is not None else counter, counter]
     if variant == "index":
         aux.append(mapping)
     else:
