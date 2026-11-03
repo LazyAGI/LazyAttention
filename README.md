@@ -82,7 +82,7 @@ index fallback keeps the original vector/gather loading policy. Mask metadata
 and sparse tile lists are separate from row mapping. Caller-owned source
 `index` may be released after preparation.
 
-See [the benchmark protocol and replay format](benchmarks/README.md). Default A/B
+See [the benchmark protocol, MAGI comparison and report commands](benchmarks/README.md). Default A/B
 is index → current paired kernel. The committed code includes no private input
 dumps or performance logs, and does not claim a universal speedup.
 

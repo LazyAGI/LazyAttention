@@ -1,4 +1,4 @@
-"""Fixed-pool CUDA Graph ABBA/BAAB benchmark: index baseline versus paired."""
+"""Paired CUDA Graph backward benchmark: index/MAGI versus index/paired."""
 import argparse
 import hashlib
 import json
@@ -14,6 +14,8 @@ import time
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--baseline',choices=['index','magi'],default='index')
+    p.add_argument('--candidate',choices=['index','paired'],default='paired')
     p.add_argument('--output',type=Path,required=True)
     p.add_argument('--input',type=Path,help='torch.save dict: q,k,v,dout,index,logical_mask')
     p.add_argument('--seqlen',type=int,default=512)
@@ -24,8 +26,10 @@ def main():
     p.add_argument('--repeat',type=int,default=0)
     p.add_argument('--cycles',type=int,default=8)
     p.add_argument('--soak-seconds',type=float,default=10)
-    p.add_argument('--phase',choices=['ab','index-aa','paired-aa'],default='ab')
+    p.add_argument('--phase',choices=['ab','index-aa','paired-aa','baseline-aa','candidate-aa'],default='ab')
     a=p.parse_args()
+    if a.baseline=='magi' and a.phase in ('index-aa','paired-aa'):
+        p.error('use baseline-aa or candidate-aa with a MAGI comparison')
     if a.output.exists(): p.error('output exists; use a new path')
     if a.blocks < 12 or a.cycles < 4 or a.cycles % 4 or a.soak_seconds < 0:
         p.error('blocks >=12, cycles a positive multiple of4, soak >=0 required')
@@ -51,8 +55,15 @@ def main():
            for name in ('index','range')}
     out,lse=forward(q,k,v,plans['range'])
     ctas=torch.cuda.get_device_properties(q.device).multi_processor_count
-    interfaces=[_interface(name,ctas) for name in ('index','paired')]
-    launches=[x._flash_attn_bwd for x in interfaces]
+    backend_names=[a.baseline,a.candidate]
+    magi=None
+    if a.baseline=='magi':
+        from benchmarks.magi import MagiBackward
+        magi=MagiBackward(f)
+        e=error(magi.out.unsqueeze(0),out)
+        if not(e['max_abs']<=.0625 and e['rel_l2']<=.006): raise RuntimeError(('MAGI forward mismatch',e))
+    interfaces=[None if name=='magi' else _interface(name,ctas) for name in backend_names]
+    launches=[x._flash_attn_bwd if x else None for x in interfaces]
     desc=plans['range'].descriptor
     desc.__leading_dim__,desc.__assumed_align__=0,16
     poison=torch.full((1,),-1073741824,device=q.device,dtype=torch.int32).expand(q.shape[1])
@@ -62,6 +73,7 @@ def main():
         compile_count[0]+=1
         return original_compile(*args,**kw)
     cute.compile=tracked
+    restore_magi=magi.track_compiles(compile_count) if magi else lambda: None
 
     class FixedPool:
         # Single-thread benchmark only: each variant must make identical buffer
@@ -85,16 +97,23 @@ def main():
         def zeros_like(self,*args,**kw): return self.get('zeros_like',args,kw)
     pools=[FixedPool(),FixedPool()]
     def fn(pool_id,role):
-        variant=(0 if a.phase=='index-aa' else 1 if a.phase=='paired-aa' else role)
+        variant=(0 if a.phase in ('index-aa','baseline-aa') else 1 if a.phase in ('paired-aa','candidate-aa') else role)
         pool=pools[pool_id]; pool.begin(); interface=interfaces[variant]
+        backend=backend_names[variant]
+        if backend=='magi':
+            # Slot 0 is the FA4 queue counter. Only output slots 1..3
+            # are shared across libraries; private scratch remains backend-owned.
+            pool.slot=1
+            outputs=tuple(pool.empty_like(x) for x in (q,k,v))
+            return magi(pool_id,outputs)
         previous=interface.torch; interface.torch=pool
         try:
             counter=pool.zeros((1,),device=q.device,dtype=torch.int32)
-            aux=[*plans['index' if variant==0 else 'range'].logical_aux,counter,counter]
-            aux.extend([plans['index'].index] if variant==0 else [poison,desc])
+            aux=[*plans['index' if backend=='index' else 'range'].logical_aux,counter,counter]
+            aux.extend([plans['index'].index] if backend=='index' else [poison,desc])
             return launches[variant](q,k,v,out,do,lse,softmax_scale=128**-.5,
                 pack_gqa=False,V_in_regs=True,mask_mod=compact_mask,aux_tensors=aux,
-                block_sparse_tensors=plans['index' if variant==0 else 'range'].backward_plan)[:3]
+                block_sparse_tensors=plans['index' if backend=='index' else 'range'].backward_plan)[:3]
         finally: interface.torch=previous
     for _ in range(12):
         for pool in (0,1):
@@ -172,12 +191,13 @@ def main():
         if telemetry_rows[-1]['pids']!=initial['pids']: raise RuntimeError('GPU process changed')
     if compile_count[0]!=compiled: raise RuntimeError('compilation during measurement')
     cute.compile=original_compile
+    restore_magi()
     from benchmarks.environment import collect
     source_root=Path(__file__).resolve().parent.parent
     source_hashes={str(file.relative_to(source_root)):hashlib.sha256(file.read_bytes()).hexdigest()
         for folder in ('lazy_attention','benchmarks') for file in sorted((source_root/folder).rglob('*.py'))}
-    result=dict(environment=collect(),fixture_sha256=fixture_sha,source_sha256=source_hashes,schema=1,phase=a.phase,repeat=a.repeat,seed=20261030+a.repeat,
-        scope='GPU backward: queue reset + preprocess + persistent kernel + dQ postprocess',
+    result=dict(backends=([backend_names[0]]*2 if a.phase in ("index-aa","baseline-aa") else [backend_names[1]]*2 if a.phase in ("paired-aa","candidate-aa") else backend_names),protocol=('shared-outputs-private-scratch-v1' if magi else 'shared-workspace-v1'),magi=magi.info if magi else None,environment=collect(),fixture_sha256=fixture_sha,source_sha256=source_hashes,schema=1,phase=a.phase,repeat=a.repeat,seed=20261030+a.repeat,
+        scope=('GPU backward: library-specific reset, preprocessing, kernel and final BF16 gradients' if magi else 'GPU backward: queue reset + preprocess + persistent kernel + dQ postprocess'),
         excludes=['preparation','forward','CPU launch/allocation','cold compilation'],
         config={**vars(a),'output':str(a.output),'input':str(a.input) if a.input else None},
         shape=list(q.shape),strides={name:list(f[name].stride()) for name in ('q','k','v','dout')},

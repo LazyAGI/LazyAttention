@@ -80,3 +80,80 @@ heads per K/V head. All fixtures use the same default scale `128**-0.5`.
 Preparation is deliberately outside graph capture. The loader uses
 `weights_only=True`; private inputs/results are ignored by Git. Input IDs and
 local paths in benchmark JSON are local experiment metadata, not source files.
+
+## MAGI comparison and reports
+
+Install a compatible [MagiAttention](https://github.com/SandAI-org/MagiAttention)
+GPU library separately, following its build instructions. It is optional for the
+index/paired tests. MAGI is called directly; no training framework is imported
+and no MAGI kernel implementation is copied into this repository. The adapter
+records the library's backward API signature and source SHA256, and fails on
+incompatible APIs instead of silently switching backends.
+
+```bash
+for repeat in 0 1 2; do
+  CUDA_VISIBLE_DEVICES=0 python -m benchmarks.backward \
+    --baseline magi --candidate paired \
+    --seqlen 4096 --kv-heads 2 --mapping continuous --mask causal \
+    --repeat "$repeat" --output "results/magi-causal-$repeat.json"
+done
+python -m benchmarks.report results/magi-causal-*.json \
+  --output results/magi-report.md
+```
+
+The command generates Markdown plus a matching JSON summary. It includes A/B
+median times, paired time change and 95% CI, independent process/block counts,
+correctness, mask range counts and environment information. At least three
+independent process repeats give a process-level Student-t interval. Reports
+with fewer repeats explicitly label their weaker within-process interval.
+Different fixtures, versions and comparisons are kept separate. `--candidate
+index` compares MAGI against the index policy; the default command without
+`--baseline magi` retains the existing index-vs-paired comparison.
+
+This measures **backward only**. Each library first computes its own forward
+output/LSE and the outputs are checked against each other. Forward, CPU metadata
+preparation and compilation are excluded from timing. MAGI clears its FP32
+accumulators, invokes its backward operator, and converts the three gradients
+back to BF16 inside the timed chain, matching the API used in earlier tests.
+The FA4 role includes its queue reset, preprocessing, main kernel and dQ scatter.
+MAGI's deterministic/atomic-reduction-disabling and range-merging options are
+off. Other MAGI tuning flags keep the library defaults.
+
+The same ABBA/BAAB CUDA Graph engine, warmup, soak, balanced order, process
+checks and raw event recording are reused. Shared BF16 output addresses cross
+between roles, while MAGI's FP32 workspace and C++ scratch remain library-owned.
+The JSON protocol is `shared-outputs-private-scratch-v1`; it must not be pooled
+with the original shared-whole-workspace protocol. Optional `--phase baseline-aa`
+or `candidate-aa` checks a measurement setup; unchanged setups do not require a
+fresh A/A before every A/B.
+
+Masks are transformed into physical row order before MAGI preparation. Full and
+standard causal masks use one compact range; general masks use disjoint exact
+rectangles, coalesced across adjacent Q rows. This generic encoder prioritizes
+correctness and may yield many fragmented ranges; range count and source are
+reported. It does not reproduce a training-specific range optimizer. For such
+comparisons, external `.pt` fixtures may additionally provide `magi_q_ranges`
+and `magi_k_ranges` (integer `[N,2]`, half-open physical row intervals) and
+`magi_attn_type_map` (integer `[N]`, full=0, bottom-right causal=1 or top-left inverse causal=2). All three
+must be present. Their exact mask coverage and absence of overlap are validated
+before any GPU work. Keep mask planning quality separate from kernel speed.
+
+CPU metadata/report checks need NumPy and SciPy:
+
+```bash
+pip install -e '.[analysis]'
+python -m unittest discover
+```
+
+For a single-command run (default: three independent processes and a report):
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -m benchmarks.compare_magi \
+  --output-dir results/magi-run --seqlen 4096 --kv-heads 2 \
+  --mapping continuous --mask causal --candidate paired
+```
+
+Additional arguments are forwarded to `benchmarks.backward`. The directory must
+be new or empty. Failures stop the suite, leave raw evidence in place, and do
+not produce a success report. Use `python -m tests.check_magi` for independent
+FP32-reference and graph-replay checks of the optional adapter.

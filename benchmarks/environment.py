@@ -14,7 +14,7 @@ TESTED = {
 
 def collect():
     result=dict(python=platform.python_version(),packages={},sources={})
-    for name in ('torch','nvidia-cutlass-dsl','quack-kernels','apache-tvm-ffi','cuda-python'):
+    for name in ('torch','nvidia-cutlass-dsl','quack-kernels','apache-tvm-ffi','cuda-python','magi-attention'):
         try: result['packages'][name]=importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError: result['packages'][name]=None
     for name,tested in TESTED.items():

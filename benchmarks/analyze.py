@@ -42,7 +42,7 @@ def main():
     # Only combine the same fixture/phase; do not silently pool different cases.
     if len(records)>=3:
         from scipy.stats import t
-        keys=[(r['phase'],r['shape'],r['config']['mapping'],r['config']['mask'],r['fixture_sha256'],r['source_sha256']) for r in records]
+        keys=[(r['phase'],r['shape'],r['config']['mapping'],r['config']['mask'],r['fixture_sha256'],r['source_sha256'],r.get('backends'),r.get('protocol'),r.get('environment'),r.get('magi')) for r in records]
         if any(k!=keys[0] for k in keys): raise ValueError('aggregate only identical fixtures and phases')
         ids=[r['repeat'] for r in records]
         if len(set(ids))!=len(ids): raise ValueError('repeat IDs must be distinct')
