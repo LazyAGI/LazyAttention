@@ -54,14 +54,7 @@ def _emit(PRIORITY, FIRST, ORDER, N: tl.constexpr, H: tl.constexpr,
     tl.store(ORDER + dst, b * H + h, h < H)
 
 
-def build_task_order(plan, documents, seqlen, kv_heads, *, quantum=64,
-                     preserve_short=True):
-    """Return CUDA int32 task IDs. documents is in logical row order, padding=-1.
-
-    All allocations, CPU-to-GPU document upload and three kernels belong to
-    planning cost. The caller retains/reuses the immutable returned order.
-    Current small-metadata implementation explicitly supports at most1024 KV tiles.
-    """
+def _validate_inputs(plan, documents, seqlen, kv_heads, quantum):
     pc, fc = plan.mask_block_cnt, plan.full_block_cnt
     if (plan.block_size != (64, 128) or pc.shape[:2] != (1, 1)
             or not pc.is_cuda or not pc.is_contiguous() or not fc.is_contiguous()
@@ -73,6 +66,18 @@ def build_task_order(plan, documents, seqlen, kv_heads, *, quantum=64,
     n = pc.numel()
     if not (0 < n <= 1024 and n * 128 == seqlen):
         raise ValueError('requires S divisible by128 and at most1024 KV tiles')
+    return pc, fc, n
+
+
+def build_task_order(plan, documents, seqlen, kv_heads, *, quantum=64,
+                     preserve_short=True):
+    """Return CUDA int32 task IDs. documents is in logical row order, padding=-1.
+
+    All allocations, CPU-to-GPU document upload and three kernels belong to
+    planning cost. The caller retains/reuses the immutable returned order.
+    Current small-metadata implementation explicitly supports at most1024 KV tiles.
+    """
+    pc, fc, n = _validate_inputs(plan, documents, seqlen, kv_heads, quantum)
     docs = documents.to(device=pc.device, dtype=torch.int32).contiguous()
     group = torch.empty((n,), device=pc.device, dtype=torch.int32)
     cost, priority, first = (torch.empty_like(group) for _ in range(3))
@@ -82,3 +87,18 @@ def build_task_order(plan, documents, seqlen, kv_heads, *, quantum=64,
     _emit[(n,)](priority, first, order, n, kv_heads,
                 triton.next_power_of_2(n), triton.next_power_of_2(kv_heads), preserve_short)
     return order
+
+
+def build_adaptive_task_order(plan, documents, seqlen, kv_heads, *, quantum=64):
+    """Planner-owned conservative policy; None means no order argument/read.
+
+    Require a task spanning at least three cost buckets before reordering.
+    The scalar D2H synchronization is one-time preparation, charged /42.
+    This is an experimental workload rule, not a shape whitelist.
+    """
+    pc, fc, _ = _validate_inputs(plan, documents, seqlen, kv_heads, quantum)
+    counts = pc + fc
+    longest = int(counts.max().item())
+    if longest <= 2 * quantum:
+        return None
+    return build_task_order(plan, documents, seqlen, kv_heads, quantum=quantum)

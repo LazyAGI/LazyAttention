@@ -143,7 +143,7 @@ def backward(q, k, v, out, dout, lse, prepared, *, scale=None, variant="paired",
                 or not task_order.is_contiguous()):
             raise ValueError('task_order must be contiguous CUDA int32 with one ID per KV/head task')
         task_order.__leading_dim__, task_order.__assumed_align__ = 0, 16
-    aux = [*prepared.logical_aux, task_order if task_order is not None else counter, counter]
+    aux = [*prepared.logical_aux, task_order, counter]
     if variant == "index":
         aux.append(mapping)
     else:

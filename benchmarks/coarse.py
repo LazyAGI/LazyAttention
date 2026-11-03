@@ -28,6 +28,7 @@ def main():
     p.add_argument('--soak-seconds',type=float,default=10)
     p.add_argument('--phase',choices=['ab','index-aa','paired-aa','baseline-aa','candidate-aa'],default='ab')
     p.add_argument('--capture-root',type=Path)
+    p.add_argument('--adaptive',action='store_true')
     p.add_argument('--rank',type=int,default=0)
     p.add_argument('--batch',type=int,default=1)
     a=p.parse_args()
@@ -63,18 +64,19 @@ def main():
         plans={'range':f['prepared']}
     else:
         plans={'range':prepare_attention(f['logical_mask'],f['index'],device=q.device)}
-    from lazy_attention.task_planning import build_task_order
-    def planner(): return build_task_order(plans['range'].backward_plan,f['documents'],q.shape[1],k.shape[2])
+    from lazy_attention.task_planning import build_task_order, build_adaptive_task_order
+    def planner(): return (build_adaptive_task_order if a.adaptive else build_task_order)(plans['range'].backward_plan,f['documents'],q.shape[1],k.shape[2])
     task_order=planner()
     from tests.check_task_planning import reference_order
     plan=plans['range'].backward_plan
     expected=reference_order((plan.mask_block_cnt+plan.full_block_cnt).cpu().flatten().tolist(),f['documents'].tolist(),k.shape[2])
-    actual=task_order.cpu().tolist()
+    actual=task_order.cpu().tolist() if task_order is not None else list(range(len(expected)))
+    if a.adaptive and task_order is None: expected=list(range(len(expected)))
     assert actual==expected
     assert sorted(actual)==list(range(len(actual)))
-    task_order.__leading_dim__,task_order.__assumed_align__=0,16
+    if task_order is not None: task_order.__leading_dim__,task_order.__assumed_align__=0,16
     counts=(plan.mask_block_cnt+plan.full_block_cnt).cpu().flatten().tolist()
-    planning_info=dict(max_q_tiles=max(counts),mean_q_tiles=statistics.mean(counts),changed_slots=sum(i!=v for i,v in enumerate(actual)),tasks=len(actual),order_sha256=hashlib.sha256(task_order.cpu().numpy().tobytes()).hexdigest())
+    planning_info=dict(skipped=task_order is None,policy="adaptive-three-buckets" if a.adaptive else "always",max_q_tiles=max(counts),mean_q_tiles=statistics.mean(counts),changed_slots=sum(i!=v for i,v in enumerate(actual)),tasks=len(actual),order_sha256=hashlib.sha256(bytes(str(actual),"ascii")).hexdigest())
     for _ in range(20): planner()
     prep_samples=[]
     for _ in range(a.blocks):
@@ -90,7 +92,7 @@ def main():
         magi=MagiBackward(f)
         e=error(magi.out.unsqueeze(0),out)
         if not(e['max_abs']<=.0625 and e['rel_l2']<=.006): raise RuntimeError(('MAGI forward mismatch',e))
-    interfaces=[_interface('paired',ctas,False),_interface('paired',ctas,True)]
+    interfaces=[_interface('paired',ctas,False),_interface('paired',ctas,task_order is not None)]
     launches=[x._flash_attn_bwd if x else None for x in interfaces]
     desc=plans['range'].descriptor
     desc.__leading_dim__,desc.__assumed_align__=0,16
