@@ -52,6 +52,7 @@ class FlashAttentionBackwardSm90:
         self.persistent_producer_regs = 24
         self.q_shift = 0
         self.planned_order = False
+        self.split_tasks = False
         self.tile_hdim = self.tile_hdimv = 128
         self.tile_m, self.tile_n = 64, 128
         self.num_threads = 384
@@ -235,7 +236,7 @@ class FlashAttentionBackwardSm90:
 
         @cute.struct
         class SharedStorageQKV:
-            task_mailbox: cute.struct.MemRange[Int32, 5]
+            task_mailbox: cute.struct.MemRange[Int32, 8 if self.split_tasks else 5]
             mbar_ptr_Q: cute.struct.MemRange[cutlass.Int64, self.Q_stage * 2]
             mbar_ptr_dO: cute.struct.MemRange[cutlass.Int64, self.dO_stage * 2]
             if const_expr(self.range_mapping):
@@ -654,9 +655,10 @@ class FlashAttentionBackwardSm90:
             tile_sched_params,
             aux_data.tensors[2],
             aux_data.tensors[3],
-            storage.task_mailbox.get_tensor(cute.make_layout(5)),
+            storage.task_mailbox.get_tensor(cute.make_layout(8 if self.split_tasks else 5)),
             participants=384 if self.range_mapping else 320,
             planned=self.planned_order,
+            split=self.split_tasks,
         )
         if warp_idx < 4:
             cute.arch.setmaxregister_decrease(self.num_producer_regs)
@@ -941,7 +943,8 @@ class FlashAttentionBackwardSm90:
                     cute.arch.cp_async_wait_group(0)
                     cute.arch.sync_warp()
                     cute.arch.fence_view_async_shared()
-                for it in cutlass.range(count, unroll=1):
+                q_start, q_end = tile_scheduler.q_bounds(count)
+                for it in cutlass.range(q_start, q_end, unroll=1):
                     m_block, is_full = shifted_q_tile(
                         it, pc, pi, fc, fi, n_block, self.q_shift
                     )
@@ -1070,7 +1073,8 @@ class FlashAttentionBackwardSm90:
                     cute.arch.cp_async_wait_group(0)
                     cute.arch.sync_warp()
                     cute.arch.fence_view_async_shared()
-                for it in cutlass.range(count, unroll=1):
+                q_start, q_end = tile_scheduler.q_bounds(count)
+                for it in cutlass.range(q_start, q_end, unroll=1):
                     m_block, is_full = shifted_q_tile(
                         it, pc, pi, fc, fi, n_block, self.q_shift
                     )
@@ -1385,7 +1389,8 @@ class FlashAttentionBackwardSm90:
                 )
                 dKV_accumulate = False
                 allowed = cute.make_fragment_like(mask_acc, Boolean)
-                for it in cutlass.range(count, unroll=1):
+                q_start, q_end = tile_scheduler.q_bounds(count)
+                for it in cutlass.range(q_start, q_end, unroll=1):
                     m_block, is_full = shifted_q_tile(
                         it, pc, pi, fc, fi, n_block, self.q_shift
                     )
@@ -1449,6 +1454,9 @@ class FlashAttentionBackwardSm90:
                         mdV_semaphore,
                         aux_data.tensors[5],
                         cute.size(aux_data.tensors[4]) // 64,
+                        partial_k=aux_data.tensors[6] if const_expr(self.split_tasks) else None,
+                        partial_v=aux_data.tensors[7] if const_expr(self.split_tasks) else None,
+                        partial_slot=tile_scheduler.mailbox[7] if const_expr(self.split_tasks) else Int32(0),
                     )
                 else:
                     self.epilogue_dKV(
@@ -1497,6 +1505,9 @@ class FlashAttentionBackwardSm90:
                         mdV_semaphore,
                         aux_data.tensors[5],
                         cute.size(aux_data.tensors[4]) // 64,
+                        partial_k=aux_data.tensors[6] if const_expr(self.split_tasks) else None,
+                        partial_v=aux_data.tensors[7] if const_expr(self.split_tasks) else None,
+                        partial_slot=tile_scheduler.mailbox[7] if const_expr(self.split_tasks) else Int32(0),
                     )
                 else:
                     self.epilogue_dKV(
@@ -1668,16 +1679,20 @@ class FlashAttentionBackwardSm90:
             n_block, head, batch, _ = work_tile.tile_idx
             bar.arrive_and_wait()
             bar.arrive_and_wait()
-            h0, h1 = (desc[n_block * 2], desc[n_block * 2 + 1])
-            if h0 >= 0 and h1 == h0 + 64:
-                if cute.arch.warp_idx() == 2:
-                    range_tma_store(sV, tdV, atomV, h0, head)
-                    range_tma_store(sK, tdK, atomK, h0, head)
-                    cute.arch.cp_async_bulk_commit_group()
-                    cute.arch.cp_async_bulk_wait_group(0, read=False)
-            else:
-                range_store128(sV, mdV, desc, n_q, n_block, h0, h1, head, tid, 64)
-                range_store128(sK, mdK, desc, n_q, n_block, h0, h1, head, tid, 64)
+            do_store = Boolean(True)
+            if const_expr(self.split_tasks):
+                do_store = tile_scheduler.mailbox[7] < 0
+            if do_store:
+                h0, h1 = (desc[n_block * 2], desc[n_block * 2 + 1])
+                if h0 >= 0 and h1 == h0 + 64:
+                    if cute.arch.warp_idx() == 2:
+                        range_tma_store(sV, tdV, atomV, h0, head)
+                        range_tma_store(sK, tdK, atomK, h0, head)
+                        cute.arch.cp_async_bulk_commit_group()
+                        cute.arch.cp_async_bulk_wait_group(0, read=False)
+                else:
+                    range_store128(sV, mdV, desc, n_q, n_block, h0, h1, head, tid, 64)
+                    range_store128(sK, mdK, desc, n_q, n_block, h0, h1, head, tid, 64)
             bar.arrive_and_wait()
             tile_scheduler.advance_to_next_work()
             work_tile = tile_scheduler.get_current_work()
@@ -1705,6 +1720,7 @@ class FlashAttentionBackwardSm90:
         mdV_semaphore: Optional[cute.Tensor] = None,
         row_descriptor: Optional[cute.Tensor] = None,
         n_q: Int32 = 0,
+        partial_k=None, partial_v=None, partial_slot=0,
     ):
         if const_expr(self.range_mapping):
             epi_barrier = SubsetBarrier(
@@ -1723,6 +1739,10 @@ class FlashAttentionBackwardSm90:
         mdV_cur = seqlen.offset_batch_K(mdV, batch_idx, dim=3, ragged=self.varlen_k)[
             None, None, head_idx
         ]
+        if const_expr(self.split_tasks):
+            if partial_slot >= 0:
+                store_partial(acc_dK, partial_k, partial_slot, tiled_mma_dK, tidx, self.dKV_swapAB)
+                store_partial(acc_dV, partial_v, partial_slot, tiled_mma_dV, tidx, self.dKV_swapAB)
         sdV = sV
         sdK = sK
         copy_dV_r2s, _, _ = copy_utils.get_smem_store_C(
@@ -1796,7 +1816,8 @@ class FlashAttentionBackwardSm90:
             pc, pi, fc, fi, count = get_block_sparse_iteration_info_bwd(
                 blocksparse_tensors, batch_idx, kv_head * 4, n_block
             )
-            for it in cutlass.range(count, unroll=1):
+            q_start, q_end = tile_scheduler.q_bounds(count)
+            for it in cutlass.range(q_start, q_end, unroll=1):
                 m_block, is_full = shifted_q_tile(
                     it, pc, pi, fc, fi, n_block, self.q_shift
                 )
@@ -2048,3 +2069,14 @@ def indexed_segment_load(raw, t16, t4, dst, a16, a4, index, start, head, bar):
                     indexed_sub_tma(t4, d4, a4, base4, head, bar, 4)
                 else:
                     indexed_load(raw, d4, index, logical4, head, Int32(0), 4, False)
+
+
+@cute.jit
+def store_partial(acc, output, slot, mma, tid, transpose: cutlass.Constexpr):
+    coords = mma.get_slice(tid).partition_C(cute.make_identity_tensor((128,128)))
+    values = cute.make_rmem_tensor(acc.shape, Float32)
+    values.store(acc.load())
+    for i in cutlass.range_constexpr(cute.size(values)):
+        a,b=coords[i]
+        row,col=(b,a) if const_expr(transpose) else (a,b)
+        output[slot,row,col]=values[i]

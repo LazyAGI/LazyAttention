@@ -83,11 +83,11 @@ class SubsetBarrier(cutlass.pipeline.NamedBarrier):
 
 
 class PersistentScheduler:
-    def __init__(self, params, order, counter, mailbox, is_producer, participants=384, planned=False):
+    def __init__(self, params, order, counter, mailbox, is_producer, participants=384, planned=False, split=False):
         self.params, self.order, self.counter = params, order, counter
         self.mailbox, self.is_producer = mailbox, is_producer
         self.participants = participants
-        self.planned = planned
+        self.planned, self.split = planned, split
 
     @staticmethod
     @cute.jit
@@ -99,9 +99,10 @@ class PersistentScheduler:
         is_producer: cutlass.Constexpr[bool] = False,
         participants: cutlass.Constexpr[int] = 384,
         planned: cutlass.Constexpr[bool] = False,
+        split: cutlass.Constexpr[bool] = False,
     ):
         return PersistentScheduler(
-            params, order, counter, mailbox, is_producer, participants, planned
+            params, order, counter, mailbox, is_producer, participants, planned, split
         )
 
     @cute.jit
@@ -110,10 +111,18 @@ class PersistentScheduler:
             if cute.arch.lane_idx() == 0:
                 n, h = self.params.num_block, self.params.num_head
                 valid = index < n * h
+                if cutlass.const_expr(self.split):
+                    valid = index < cute.size(self.order.shape[0])
                 if cutlass.const_expr(self.planned):
                     task = Int32(0)
                     if valid:
-                        task = self.order[index]
+                        if cutlass.const_expr(self.split):
+                            task = self.order[index, 0]
+                            self.mailbox[5] = self.order[index, 1]
+                            self.mailbox[6] = self.order[index, 2]
+                            self.mailbox[7] = self.order[index, 3]
+                        else:
+                            task = self.order[index]
                     self.mailbox[0] = task // h
                     self.mailbox[1] = task % h
                 else:
@@ -158,6 +167,13 @@ class PersistentScheduler:
             self.publish(Int32(self.mailbox[4]))
         SubsetBarrier(barrier_id=13, num_threads=self.participants).arrive_and_wait()
 
+    @cute.jit
+    def q_bounds(self, count):
+        start, end = Int32(0), count
+        if cutlass.const_expr(self.split):
+            start, end = Int32(self.mailbox[5]), Int32(self.mailbox[6])
+        return start, end
+
     def _objects(self):
         return (
             (self.params, self.order, self.counter, self.mailbox)
@@ -179,7 +195,7 @@ class PersistentScheduler:
             args.append(cutlass.new_from_mlir_values(x, values[:n]))
             values = values[n:]
         if self.is_producer:
-            return PersistentScheduler(*args, self.is_producer, self.participants, self.planned)
+            return PersistentScheduler(*args, self.is_producer, self.participants, self.planned, self.split)
         return PersistentScheduler(
-            self.params, self.order, self.counter, args[0], False, self.participants, self.planned
+            self.params, self.order, self.counter, args[0], False, self.participants, self.planned, self.split
         )

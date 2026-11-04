@@ -102,3 +102,64 @@ def build_adaptive_task_order(plan, documents, seqlen, kv_heads, *, quantum=64):
     if longest <= 2 * quantum:
         return None
     return build_task_order(plan, documents, seqlen, kv_heads, quantum=quantum)
+
+
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class TaskPlan:
+    order: object
+    reduction_indices: object = None
+    reduction_tasks: object = None
+    partial_count: int = 0
+    @property
+    def split(self):
+        return self.reduction_indices is not None
+
+
+def plan_tasks(plan, documents, seqlen, kv_heads, *, reorder=False,
+               split=False, split_size=128):
+    """One reusable metadata plan. Both switches off does no device work."""
+    if not reorder and not split:
+        return None
+    if split_size < 1:
+        raise ValueError('split_size must be positive')
+    if not split:
+        order=build_adaptive_task_order(plan,documents,seqlen,kv_heads) if reorder else None
+        return TaskPlan(order) if order is not None else None
+    import numpy as np
+    pc,fc,n=_validate_inputs(plan, documents, seqlen, kv_heads, 64)
+    counts=(pc+fc).flatten().cpu().numpy().astype(np.int32)
+    if int(counts.max())<=split_size:
+        order=build_adaptive_task_order(plan,documents,seqlen,kv_heads) if reorder else None
+        return TaskPlan(order) if order is not None else None
+    ids=np.arange(n*kv_heads,dtype=np.int32)
+    if reorder and counts.max()>128:
+        docs=documents.cpu().numpy().reshape(n,128)
+        lo=np.where(docs>=0,docs,np.iinfo(np.int32).max).min(axis=1)
+        hi=docs.max(axis=1)
+        groups=np.where(hi<0,-1,np.where(lo==hi,lo,-np.arange(n)-2))
+        buckets=(counts+63)//64
+        members=[np.flatnonzero(groups==g) for g in np.unique(groups)]
+        members.sort(key=lambda m:(-int(buckets[m].max()),int(m[0])))
+        ids=np.concatenate([(m[:,None]*kv_heads+np.arange(kv_heads)).T.ravel() for m in members]).astype(np.int32)
+    lengths=np.maximum(1,(counts[ids//kv_heads]+split_size-1)//split_size)
+    starts=np.r_[0,np.cumsum(lengths)]
+    task=np.repeat(ids,lengths)
+    segment=np.arange(len(task))-np.repeat(starts[:-1],lengths)
+    begin=segment*split_size
+    task_lengths=np.empty(n*kv_heads,dtype=np.int32)
+    task_lengths[ids]=lengths
+    is_split=task_lengths[task]>1
+    slots=np.full(len(task),-1,dtype=np.int32)
+    slots[is_split]=np.arange(int(is_split.sum()),dtype=np.int32)
+    records=np.column_stack((task,begin,np.minimum(begin+split_size,counts[task//kv_heads]),slots)).astype(np.int32)
+    split_tasks=np.flatnonzero(task_lengths>1).astype(np.int32)
+    task_rows=np.full(n*kv_heads,-1,dtype=np.int32)
+    task_rows[split_tasks]=np.arange(len(split_tasks))
+    indices=np.full((len(split_tasks),int(lengths.max())),-1,dtype=np.int32)
+    indices[task_rows[task[is_split]],segment[is_split]]=slots[is_split]
+    table=torch.from_numpy(records).to(pc.device)
+    table.__leading_dim__,table.__assumed_align__=1,16
+    return TaskPlan(table,torch.from_numpy(indices).to(pc.device),
+                    torch.from_numpy(split_tasks).to(pc.device),int(is_split.sum()))

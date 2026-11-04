@@ -23,6 +23,7 @@ from flash_attn.cute.interface import (
 from lazy_attention.csrc.fa4.post_launcher import postprocess
 
 range_mapping = False
+split_tasks = False
 # Set on the private module by operator._interface; no public FA4 mutation.
 FlashAttentionBackwardSm90 = None
 
@@ -52,7 +53,7 @@ def _flash_attn_bwd(
         raise ValueError("requires unpacked GQA4, V in registers and a sparse plan")
     if block_sparse_tensors.block_size != (64, 128):
         raise ValueError("requires a 64x128 backward plan")
-    if len(aux_tensors) != (6 if range_mapping else 5):
+    if len(aux_tensors) != (8 if split_tasks else 6 if range_mapping else 5):
         raise ValueError("wrong row-map ABI")
     q, k, v, out, dout, lse = [maybe_contiguous(t) for t in (q, k, v, out, dout, lse)]
     batch_size, seqlen, num_head, head_dim = q.shape
@@ -219,7 +220,7 @@ def _flash_attn_bwd(
         None,
     )
     postprocess(
-        dq_accum, dq, aux_tensors[-1], softmax_scale, range_mapping=range_mapping
+        dq_accum, dq, aux_tensors[5] if range_mapping else aux_tensors[4], softmax_scale, range_mapping=range_mapping
     )
     return dq, dk, dv
 
