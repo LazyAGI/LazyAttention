@@ -1,0 +1,1761 @@
+{
+  "date": "2026-11-04",
+  "scope": "full GPU backward + extra preparation/42; common captured-mask preparation excluded",
+  "hardware": "NVIDIA H100 80GB HBM3",
+  "software": {
+    "python": "3.12.12",
+    "torch": "2.13.0+cu126",
+    "magi": "1.1.1",
+    "cutlass_dsl": "4.6.2"
+  },
+  "input": {
+    "cases": 240,
+    "query_heads": 32,
+    "kv_heads": 8,
+    "head_dim": 128,
+    "dtype": "bfloat16",
+    "sequence_min": 31616,
+    "sequence_max": 32768
+  },
+  "defaults": {
+    "reorder": true,
+    "split": false,
+    "head_major": false,
+    "reverse": true,
+    "interleave": 0
+  },
+  "protocol": {
+    "processes": 1,
+    "corpus_rounds": 1,
+    "timing_blocks": 16,
+    "cycles": 4,
+    "preparation_reuse": 42,
+    "repeated_AA": false
+  },
+  "summary": {
+    "cases": 240,
+    "magi_mean_ms": 15.470014660131392,
+    "lazy_mean_ms": 13.152644708379103,
+    "speedup": 1.1761904166905666,
+    "time_reduction_pct": 14.97975278410374,
+    "lazy_wins": 240,
+    "lazy_wins_over_1pct": 240,
+    "lazy_losses_over_1pct": 0,
+    "per_case_speedup_min": 1.0318424577316023,
+    "per_case_speedup_max": 1.700971328202828,
+    "max_abs": 0.015625,
+    "max_rel_l2": 0.0012392146745696664
+  },
+  "cases": [
+    {
+      "rank": 0,
+      "batch": 1,
+      "seqlen": 32768,
+      "magi_effective_ms": 21.785283777068003,
+      "lazy_effective_ms": 18.057524386130698
+    },
+    {
+      "rank": 0,
+      "batch": 2,
+      "seqlen": 32128,
+      "magi_effective_ms": 10.708289024963243,
+      "lazy_effective_ms": 9.686775068725677
+    },
+    {
+      "rank": 0,
+      "batch": 3,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.65977968325892,
+      "lazy_effective_ms": 9.71289187196341
+    },
+    {
+      "rank": 0,
+      "batch": 4,
+      "seqlen": 32512,
+      "magi_effective_ms": 13.163926684250786,
+      "lazy_effective_ms": 11.192445244337037
+    },
+    {
+      "rank": 0,
+      "batch": 5,
+      "seqlen": 32640,
+      "magi_effective_ms": 11.743903484378974,
+      "lazy_effective_ms": 10.552371144420034
+    },
+    {
+      "rank": 0,
+      "batch": 6,
+      "seqlen": 32768,
+      "magi_effective_ms": 7.168688939581201,
+      "lazy_effective_ms": 5.186361024838504
+    },
+    {
+      "rank": 0,
+      "batch": 7,
+      "seqlen": 32512,
+      "magi_effective_ms": 33.10204910795448,
+      "lazy_effective_ms": 26.828526971977553
+    },
+    {
+      "rank": 0,
+      "batch": 8,
+      "seqlen": 32512,
+      "magi_effective_ms": 18.90947725855773,
+      "lazy_effective_ms": 14.893494297102814
+    },
+    {
+      "rank": 0,
+      "batch": 9,
+      "seqlen": 32768,
+      "magi_effective_ms": 10.869754940831388,
+      "lazy_effective_ms": 9.575900681794643
+    },
+    {
+      "rank": 0,
+      "batch": 10,
+      "seqlen": 32384,
+      "magi_effective_ms": 34.61012628495008,
+      "lazy_effective_ms": 22.905032093387195
+    },
+    {
+      "rank": 0,
+      "batch": 11,
+      "seqlen": 32768,
+      "magi_effective_ms": 15.907775388876097,
+      "lazy_effective_ms": 13.348142289708841
+    },
+    {
+      "rank": 0,
+      "batch": 12,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.41718505168413,
+      "lazy_effective_ms": 10.469166889483043
+    },
+    {
+      "rank": 0,
+      "batch": 13,
+      "seqlen": 31872,
+      "magi_effective_ms": 17.024368159129644,
+      "lazy_effective_ms": 13.975580772397064
+    },
+    {
+      "rank": 0,
+      "batch": 14,
+      "seqlen": 32768,
+      "magi_effective_ms": 14.800728795983746,
+      "lazy_effective_ms": 12.746873279459999
+    },
+    {
+      "rank": 0,
+      "batch": 15,
+      "seqlen": 32640,
+      "magi_effective_ms": 7.5550778487149985,
+      "lazy_effective_ms": 5.536565169780197
+    },
+    {
+      "rank": 0,
+      "batch": 16,
+      "seqlen": 32640,
+      "magi_effective_ms": 11.723204031820615,
+      "lazy_effective_ms": 10.401369762886093
+    },
+    {
+      "rank": 0,
+      "batch": 17,
+      "seqlen": 32768,
+      "magi_effective_ms": 19.07521409795239,
+      "lazy_effective_ms": 18.155561206576348
+    },
+    {
+      "rank": 0,
+      "batch": 18,
+      "seqlen": 32768,
+      "magi_effective_ms": 10.519758000061694,
+      "lazy_effective_ms": 9.549000753384409
+    },
+    {
+      "rank": 0,
+      "batch": 19,
+      "seqlen": 32640,
+      "magi_effective_ms": 11.535769298142638,
+      "lazy_effective_ms": 10.08943077038858
+    },
+    {
+      "rank": 0,
+      "batch": 20,
+      "seqlen": 32768,
+      "magi_effective_ms": 7.57206720764176,
+      "lazy_effective_ms": 5.696762972988299
+    },
+    {
+      "rank": 0,
+      "batch": 21,
+      "seqlen": 32768,
+      "magi_effective_ms": 12.119617692784876,
+      "lazy_effective_ms": 10.331213123086044
+    },
+    {
+      "rank": 0,
+      "batch": 22,
+      "seqlen": 32640,
+      "magi_effective_ms": 10.134837026031244,
+      "lazy_effective_ms": 9.469074705202306
+    },
+    {
+      "rank": 0,
+      "batch": 23,
+      "seqlen": 32640,
+      "magi_effective_ms": 10.973251060576734,
+      "lazy_effective_ms": 9.595078515181314
+    },
+    {
+      "rank": 0,
+      "batch": 24,
+      "seqlen": 32768,
+      "magi_effective_ms": 18.450224785343078,
+      "lazy_effective_ms": 14.054821100158168
+    },
+    {
+      "rank": 0,
+      "batch": 25,
+      "seqlen": 32768,
+      "magi_effective_ms": 17.25589540931166,
+      "lazy_effective_ms": 15.949375637949558
+    },
+    {
+      "rank": 0,
+      "batch": 26,
+      "seqlen": 32000,
+      "magi_effective_ms": 20.262174989552953,
+      "lazy_effective_ms": 19.624806908827146
+    },
+    {
+      "rank": 0,
+      "batch": 27,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.701473215325901,
+      "lazy_effective_ms": 10.448588693373702
+    },
+    {
+      "rank": 0,
+      "batch": 28,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.528995098578113,
+      "lazy_effective_ms": 10.264985061479727
+    },
+    {
+      "rank": 0,
+      "batch": 29,
+      "seqlen": 32768,
+      "magi_effective_ms": 13.612607797023092,
+      "lazy_effective_ms": 11.924523028901644
+    },
+    {
+      "rank": 0,
+      "batch": 30,
+      "seqlen": 31872,
+      "magi_effective_ms": 10.458244819589684,
+      "lazy_effective_ms": 8.73417863224931
+    },
+    {
+      "rank": 1,
+      "batch": 1,
+      "seqlen": 32512,
+      "magi_effective_ms": 10.62185786572411,
+      "lazy_effective_ms": 9.573622603771664
+    },
+    {
+      "rank": 1,
+      "batch": 2,
+      "seqlen": 32768,
+      "magi_effective_ms": 16.73758776015143,
+      "lazy_effective_ms": 16.221069054424515
+    },
+    {
+      "rank": 1,
+      "batch": 3,
+      "seqlen": 32512,
+      "magi_effective_ms": 22.116253661174593,
+      "lazy_effective_ms": 20.954981312205952
+    },
+    {
+      "rank": 1,
+      "batch": 4,
+      "seqlen": 32128,
+      "magi_effective_ms": 24.201669419346537,
+      "lazy_effective_ms": 20.78223127057616
+    },
+    {
+      "rank": 1,
+      "batch": 5,
+      "seqlen": 32256,
+      "magi_effective_ms": 16.643769300550574,
+      "lazy_effective_ms": 14.639625948573135
+    },
+    {
+      "rank": 1,
+      "batch": 6,
+      "seqlen": 32640,
+      "magi_effective_ms": 13.78526344367386,
+      "lazy_effective_ms": 11.399159123999324
+    },
+    {
+      "rank": 1,
+      "batch": 7,
+      "seqlen": 32640,
+      "magi_effective_ms": 35.20099442902637,
+      "lazy_effective_ms": 33.3248368769395
+    },
+    {
+      "rank": 1,
+      "batch": 8,
+      "seqlen": 32640,
+      "magi_effective_ms": 19.63152211591707,
+      "lazy_effective_ms": 16.5822690854536
+    },
+    {
+      "rank": 1,
+      "batch": 9,
+      "seqlen": 32256,
+      "magi_effective_ms": 11.784522613374733,
+      "lazy_effective_ms": 10.617485381627695
+    },
+    {
+      "rank": 1,
+      "batch": 10,
+      "seqlen": 32768,
+      "magi_effective_ms": 10.15204503661519,
+      "lazy_effective_ms": 8.268821738399199
+    },
+    {
+      "rank": 1,
+      "batch": 11,
+      "seqlen": 32640,
+      "magi_effective_ms": 19.710776774403936,
+      "lazy_effective_ms": 18.40053644773942
+    },
+    {
+      "rank": 1,
+      "batch": 12,
+      "seqlen": 32640,
+      "magi_effective_ms": 16.214288334427106,
+      "lazy_effective_ms": 13.070827546515487
+    },
+    {
+      "rank": 1,
+      "batch": 13,
+      "seqlen": 32384,
+      "magi_effective_ms": 11.293438766592548,
+      "lazy_effective_ms": 9.297375997235003
+    },
+    {
+      "rank": 1,
+      "batch": 14,
+      "seqlen": 32768,
+      "magi_effective_ms": 34.274937392748875,
+      "lazy_effective_ms": 21.691302320141748
+    },
+    {
+      "rank": 1,
+      "batch": 15,
+      "seqlen": 32512,
+      "magi_effective_ms": 10.938705798003674,
+      "lazy_effective_ms": 10.024457397113665
+    },
+    {
+      "rank": 1,
+      "batch": 16,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.636180994758652,
+      "lazy_effective_ms": 9.851172285863809
+    },
+    {
+      "rank": 1,
+      "batch": 17,
+      "seqlen": 32512,
+      "magi_effective_ms": 6.40140927241004,
+      "lazy_effective_ms": 4.329445189570438
+    },
+    {
+      "rank": 1,
+      "batch": 18,
+      "seqlen": 32512,
+      "magi_effective_ms": 11.88079967134001,
+      "lazy_effective_ms": 10.566757616341228
+    },
+    {
+      "rank": 1,
+      "batch": 19,
+      "seqlen": 32640,
+      "magi_effective_ms": 10.892125744209016,
+      "lazy_effective_ms": 9.025215031791324
+    },
+    {
+      "rank": 1,
+      "batch": 20,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.317191299735931,
+      "lazy_effective_ms": 10.238073060166155
+    },
+    {
+      "rank": 1,
+      "batch": 21,
+      "seqlen": 32384,
+      "magi_effective_ms": 16.715718452653658,
+      "lazy_effective_ms": 15.973374134692351
+    },
+    {
+      "rank": 1,
+      "batch": 22,
+      "seqlen": 32384,
+      "magi_effective_ms": 21.061096374512356,
+      "lazy_effective_ms": 17.681492550833067
+    },
+    {
+      "rank": 1,
+      "batch": 23,
+      "seqlen": 32640,
+      "magi_effective_ms": 12.139666431547234,
+      "lazy_effective_ms": 10.799669121345248
+    },
+    {
+      "rank": 1,
+      "batch": 24,
+      "seqlen": 32640,
+      "magi_effective_ms": 10.26439964880882,
+      "lazy_effective_ms": 8.934602454648154
+    },
+    {
+      "rank": 1,
+      "batch": 25,
+      "seqlen": 32768,
+      "magi_effective_ms": 18.003611658889227,
+      "lazy_effective_ms": 15.342175809958094
+    },
+    {
+      "rank": 1,
+      "batch": 26,
+      "seqlen": 32768,
+      "magi_effective_ms": 18.915247798495248,
+      "lazy_effective_ms": 15.485217171780858
+    },
+    {
+      "rank": 1,
+      "batch": 27,
+      "seqlen": 32768,
+      "magi_effective_ms": 10.618262399996985,
+      "lazy_effective_ms": 9.343764606936887
+    },
+    {
+      "rank": 1,
+      "batch": 28,
+      "seqlen": 32000,
+      "magi_effective_ms": 11.735143656106812,
+      "lazy_effective_ms": 10.602365896835758
+    },
+    {
+      "rank": 1,
+      "batch": 29,
+      "seqlen": 32640,
+      "magi_effective_ms": 12.360268016549997,
+      "lazy_effective_ms": 10.485102794669674
+    },
+    {
+      "rank": 1,
+      "batch": 30,
+      "seqlen": 32256,
+      "magi_effective_ms": 6.558367132062094,
+      "lazy_effective_ms": 5.1302153599895295
+    },
+    {
+      "rank": 2,
+      "batch": 1,
+      "seqlen": 32640,
+      "magi_effective_ms": 16.385492090892473,
+      "lazy_effective_ms": 13.86619515107459
+    },
+    {
+      "rank": 2,
+      "batch": 2,
+      "seqlen": 32768,
+      "magi_effective_ms": 33.71250233095006,
+      "lazy_effective_ms": 31.88164476006599
+    },
+    {
+      "rank": 2,
+      "batch": 3,
+      "seqlen": 32128,
+      "magi_effective_ms": 13.917148044877143,
+      "lazy_effective_ms": 11.733227210331304
+    },
+    {
+      "rank": 2,
+      "batch": 4,
+      "seqlen": 32768,
+      "magi_effective_ms": 14.690691978213923,
+      "lazy_effective_ms": 12.650472104007743
+    },
+    {
+      "rank": 2,
+      "batch": 5,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.740726439844426,
+      "lazy_effective_ms": 10.597133314235029
+    },
+    {
+      "rank": 2,
+      "batch": 6,
+      "seqlen": 32512,
+      "magi_effective_ms": 11.446881969352631,
+      "lazy_effective_ms": 9.551357256268092
+    },
+    {
+      "rank": 2,
+      "batch": 7,
+      "seqlen": 32768,
+      "magi_effective_ms": 10.923481042786008,
+      "lazy_effective_ms": 9.689622333967595
+    },
+    {
+      "rank": 2,
+      "batch": 8,
+      "seqlen": 32512,
+      "magi_effective_ms": 13.604319205531938,
+      "lazy_effective_ms": 11.835424527360848
+    },
+    {
+      "rank": 2,
+      "batch": 9,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.716256873839697,
+      "lazy_effective_ms": 9.784369013435613
+    },
+    {
+      "rank": 2,
+      "batch": 10,
+      "seqlen": 32640,
+      "magi_effective_ms": 12.032174058251654,
+      "lazy_effective_ms": 10.888985389539787
+    },
+    {
+      "rank": 2,
+      "batch": 11,
+      "seqlen": 32640,
+      "magi_effective_ms": 15.040962756967703,
+      "lazy_effective_ms": 13.278692476289182
+    },
+    {
+      "rank": 2,
+      "batch": 12,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.42639849469807,
+      "lazy_effective_ms": 10.34806286447709
+    },
+    {
+      "rank": 2,
+      "batch": 13,
+      "seqlen": 32640,
+      "magi_effective_ms": 8.739820918738616,
+      "lazy_effective_ms": 7.402445883943092
+    },
+    {
+      "rank": 2,
+      "batch": 14,
+      "seqlen": 32640,
+      "magi_effective_ms": 17.218809605393638,
+      "lazy_effective_ms": 15.685940959319115
+    },
+    {
+      "rank": 2,
+      "batch": 15,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.799972256156718,
+      "lazy_effective_ms": 9.953116336001465
+    },
+    {
+      "rank": 2,
+      "batch": 16,
+      "seqlen": 32384,
+      "magi_effective_ms": 15.97854199039634,
+      "lazy_effective_ms": 13.48695008324823
+    },
+    {
+      "rank": 2,
+      "batch": 17,
+      "seqlen": 32768,
+      "magi_effective_ms": 18.250425289797285,
+      "lazy_effective_ms": 15.034314074373132
+    },
+    {
+      "rank": 2,
+      "batch": 18,
+      "seqlen": 32640,
+      "magi_effective_ms": 16.35831946568162,
+      "lazy_effective_ms": 14.949722283380417
+    },
+    {
+      "rank": 2,
+      "batch": 19,
+      "seqlen": 32640,
+      "magi_effective_ms": 25.36626804814852,
+      "lazy_effective_ms": 23.688975304031963
+    },
+    {
+      "rank": 2,
+      "batch": 20,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.379703846148582,
+      "lazy_effective_ms": 9.669875451136043
+    },
+    {
+      "rank": 2,
+      "batch": 21,
+      "seqlen": 32768,
+      "magi_effective_ms": 14.047615771803697,
+      "lazy_effective_ms": 11.893150253720329
+    },
+    {
+      "rank": 2,
+      "batch": 22,
+      "seqlen": 32640,
+      "magi_effective_ms": 10.052791140573683,
+      "lazy_effective_ms": 8.270807390659934
+    },
+    {
+      "rank": 2,
+      "batch": 23,
+      "seqlen": 32768,
+      "magi_effective_ms": 6.88779075111883,
+      "lazy_effective_ms": 5.068295506830091
+    },
+    {
+      "rank": 2,
+      "batch": 24,
+      "seqlen": 32384,
+      "magi_effective_ms": 22.954345705486116,
+      "lazy_effective_ms": 21.797185011075836
+    },
+    {
+      "rank": 2,
+      "batch": 25,
+      "seqlen": 32384,
+      "magi_effective_ms": 19.015931686593284,
+      "lazy_effective_ms": 15.508897868414493
+    },
+    {
+      "rank": 2,
+      "batch": 26,
+      "seqlen": 32640,
+      "magi_effective_ms": 8.805155013006187,
+      "lazy_effective_ms": 7.335913299487591
+    },
+    {
+      "rank": 2,
+      "batch": 27,
+      "seqlen": 32512,
+      "magi_effective_ms": 25.67320662936465,
+      "lazy_effective_ms": 20.804829668629964
+    },
+    {
+      "rank": 2,
+      "batch": 28,
+      "seqlen": 32384,
+      "magi_effective_ms": 11.149923157765343,
+      "lazy_effective_ms": 9.614988969933986
+    },
+    {
+      "rank": 2,
+      "batch": 29,
+      "seqlen": 32640,
+      "magi_effective_ms": 12.073880788207326,
+      "lazy_effective_ms": 10.890713080416043
+    },
+    {
+      "rank": 2,
+      "batch": 30,
+      "seqlen": 32640,
+      "magi_effective_ms": 31.72866843390215,
+      "lazy_effective_ms": 25.187184014948482
+    },
+    {
+      "rank": 3,
+      "batch": 1,
+      "seqlen": 32640,
+      "magi_effective_ms": 11.032990259378161,
+      "lazy_effective_ms": 9.42493498523712
+    },
+    {
+      "rank": 3,
+      "batch": 2,
+      "seqlen": 32768,
+      "magi_effective_ms": 8.2814412786839,
+      "lazy_effective_ms": 6.8089500766346
+    },
+    {
+      "rank": 3,
+      "batch": 3,
+      "seqlen": 32640,
+      "magi_effective_ms": 6.106946666009528,
+      "lazy_effective_ms": 4.688067595516409
+    },
+    {
+      "rank": 3,
+      "batch": 4,
+      "seqlen": 31744,
+      "magi_effective_ms": 24.42820782280795,
+      "lazy_effective_ms": 23.128055342662766
+    },
+    {
+      "rank": 3,
+      "batch": 5,
+      "seqlen": 32640,
+      "magi_effective_ms": 21.24767431440349,
+      "lazy_effective_ms": 20.239739144341378
+    },
+    {
+      "rank": 3,
+      "batch": 6,
+      "seqlen": 31616,
+      "magi_effective_ms": 32.6427787501718,
+      "lazy_effective_ms": 26.126349194780985
+    },
+    {
+      "rank": 3,
+      "batch": 7,
+      "seqlen": 32512,
+      "magi_effective_ms": 10.91858964296409,
+      "lazy_effective_ms": 9.83884464677125
+    },
+    {
+      "rank": 3,
+      "batch": 8,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.987141134857609,
+      "lazy_effective_ms": 10.14333797232369
+    },
+    {
+      "rank": 3,
+      "batch": 9,
+      "seqlen": 32640,
+      "magi_effective_ms": 16.343311456988765,
+      "lazy_effective_ms": 13.699473256580102
+    },
+    {
+      "rank": 3,
+      "batch": 10,
+      "seqlen": 32640,
+      "magi_effective_ms": 11.614071964218503,
+      "lazy_effective_ms": 10.411266852646804
+    },
+    {
+      "rank": 3,
+      "batch": 11,
+      "seqlen": 32384,
+      "magi_effective_ms": 11.124909890261492,
+      "lazy_effective_ms": 10.22436332918728
+    },
+    {
+      "rank": 3,
+      "batch": 12,
+      "seqlen": 32384,
+      "magi_effective_ms": 11.353946845182124,
+      "lazy_effective_ms": 10.448482480578127
+    },
+    {
+      "rank": 3,
+      "batch": 13,
+      "seqlen": 32640,
+      "magi_effective_ms": 46.80623660366994,
+      "lazy_effective_ms": 33.30739845298022
+    },
+    {
+      "rank": 3,
+      "batch": 14,
+      "seqlen": 32256,
+      "magi_effective_ms": 13.66527341692366,
+      "lazy_effective_ms": 11.351899492665744
+    },
+    {
+      "rank": 3,
+      "batch": 15,
+      "seqlen": 32768,
+      "magi_effective_ms": 12.00088736513215,
+      "lazy_effective_ms": 10.609210236039639
+    },
+    {
+      "rank": 3,
+      "batch": 16,
+      "seqlen": 32768,
+      "magi_effective_ms": 18.347106990348863,
+      "lazy_effective_ms": 16.865266777584075
+    },
+    {
+      "rank": 3,
+      "batch": 17,
+      "seqlen": 32640,
+      "magi_effective_ms": 10.907172030349482,
+      "lazy_effective_ms": 9.991847523016702
+    },
+    {
+      "rank": 3,
+      "batch": 18,
+      "seqlen": 32640,
+      "magi_effective_ms": 11.696351594552153,
+      "lazy_effective_ms": 10.616652450640066
+    },
+    {
+      "rank": 3,
+      "batch": 19,
+      "seqlen": 32768,
+      "magi_effective_ms": 14.191075357010638,
+      "lazy_effective_ms": 11.624537936971391
+    },
+    {
+      "rank": 3,
+      "batch": 20,
+      "seqlen": 32768,
+      "magi_effective_ms": 13.828775765090647,
+      "lazy_effective_ms": 12.166709901915914
+    },
+    {
+      "rank": 3,
+      "batch": 21,
+      "seqlen": 32768,
+      "magi_effective_ms": 12.22751901981306,
+      "lazy_effective_ms": 10.413192866234892
+    },
+    {
+      "rank": 3,
+      "batch": 22,
+      "seqlen": 32768,
+      "magi_effective_ms": 6.49283867890056,
+      "lazy_effective_ms": 4.6139105566056795
+    },
+    {
+      "rank": 3,
+      "batch": 23,
+      "seqlen": 32512,
+      "magi_effective_ms": 17.380666791687695,
+      "lazy_effective_ms": 14.901915409671489
+    },
+    {
+      "rank": 3,
+      "batch": 24,
+      "seqlen": 32384,
+      "magi_effective_ms": 28.21347363689391,
+      "lazy_effective_ms": 26.870287681751886
+    },
+    {
+      "rank": 3,
+      "batch": 25,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.10059274683841,
+      "lazy_effective_ms": 9.591136099346773
+    },
+    {
+      "rank": 3,
+      "batch": 26,
+      "seqlen": 32256,
+      "magi_effective_ms": 20.233156320667813,
+      "lazy_effective_ms": 19.56777219023087
+    },
+    {
+      "rank": 3,
+      "batch": 27,
+      "seqlen": 32512,
+      "magi_effective_ms": 30.806559280097552,
+      "lazy_effective_ms": 23.833334088582173
+    },
+    {
+      "rank": 3,
+      "batch": 28,
+      "seqlen": 32768,
+      "magi_effective_ms": 10.136325302729357,
+      "lazy_effective_ms": 8.927318080154624
+    },
+    {
+      "rank": 3,
+      "batch": 29,
+      "seqlen": 32640,
+      "magi_effective_ms": 16.958155477182615,
+      "lazy_effective_ms": 13.266123466565178
+    },
+    {
+      "rank": 3,
+      "batch": 30,
+      "seqlen": 32768,
+      "magi_effective_ms": 15.363473430706273,
+      "lazy_effective_ms": 13.807237552412284
+    },
+    {
+      "rank": 4,
+      "batch": 1,
+      "seqlen": 32384,
+      "magi_effective_ms": 10.48219485654765,
+      "lazy_effective_ms": 8.84814285548662
+    },
+    {
+      "rank": 4,
+      "batch": 2,
+      "seqlen": 32768,
+      "magi_effective_ms": 10.458549635218143,
+      "lazy_effective_ms": 9.161524573411691
+    },
+    {
+      "rank": 4,
+      "batch": 3,
+      "seqlen": 32256,
+      "magi_effective_ms": 18.374189107336953,
+      "lazy_effective_ms": 15.384722758631115
+    },
+    {
+      "rank": 4,
+      "batch": 4,
+      "seqlen": 32256,
+      "magi_effective_ms": 11.858795190536432,
+      "lazy_effective_ms": 10.58021223424437
+    },
+    {
+      "rank": 4,
+      "batch": 5,
+      "seqlen": 32512,
+      "magi_effective_ms": 23.07297629785624,
+      "lazy_effective_ms": 18.75639472870118
+    },
+    {
+      "rank": 4,
+      "batch": 6,
+      "seqlen": 32128,
+      "magi_effective_ms": 15.63311144167337,
+      "lazy_effective_ms": 14.889327333436693
+    },
+    {
+      "rank": 4,
+      "batch": 7,
+      "seqlen": 32640,
+      "magi_effective_ms": 15.192085316411541,
+      "lazy_effective_ms": 13.069601904089883
+    },
+    {
+      "rank": 4,
+      "batch": 8,
+      "seqlen": 32384,
+      "magi_effective_ms": 34.21764171719442,
+      "lazy_effective_ms": 20.116530566889264
+    },
+    {
+      "rank": 4,
+      "batch": 9,
+      "seqlen": 32512,
+      "magi_effective_ms": 11.155534895280724,
+      "lazy_effective_ms": 9.846886012346358
+    },
+    {
+      "rank": 4,
+      "batch": 10,
+      "seqlen": 32640,
+      "magi_effective_ms": 12.390765249583584,
+      "lazy_effective_ms": 10.432351544657866
+    },
+    {
+      "rank": 4,
+      "batch": 11,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.344495255515643,
+      "lazy_effective_ms": 10.234459531751678
+    },
+    {
+      "rank": 4,
+      "batch": 12,
+      "seqlen": 32640,
+      "magi_effective_ms": 16.525303096893218,
+      "lazy_effective_ms": 14.095777390751202
+    },
+    {
+      "rank": 4,
+      "batch": 13,
+      "seqlen": 32512,
+      "magi_effective_ms": 11.793268979525248,
+      "lazy_effective_ms": 10.417137465849649
+    },
+    {
+      "rank": 4,
+      "batch": 14,
+      "seqlen": 32768,
+      "magi_effective_ms": 7.053314127540861,
+      "lazy_effective_ms": 5.258648865858635
+    },
+    {
+      "rank": 4,
+      "batch": 15,
+      "seqlen": 32640,
+      "magi_effective_ms": 26.484404377157983,
+      "lazy_effective_ms": 21.867460084584554
+    },
+    {
+      "rank": 4,
+      "batch": 16,
+      "seqlen": 32128,
+      "magi_effective_ms": 11.351413394855909,
+      "lazy_effective_ms": 9.515333505848226
+    },
+    {
+      "rank": 4,
+      "batch": 17,
+      "seqlen": 32384,
+      "magi_effective_ms": 17.37428648780119,
+      "lazy_effective_ms": 14.650546699880032
+    },
+    {
+      "rank": 4,
+      "batch": 18,
+      "seqlen": 32768,
+      "magi_effective_ms": 15.684354811415513,
+      "lazy_effective_ms": 12.650714337468193
+    },
+    {
+      "rank": 4,
+      "batch": 19,
+      "seqlen": 32640,
+      "magi_effective_ms": 19.47629320596454,
+      "lazy_effective_ms": 18.782489840773717
+    },
+    {
+      "rank": 4,
+      "batch": 20,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.247600308296612,
+      "lazy_effective_ms": 10.26190820015049
+    },
+    {
+      "rank": 4,
+      "batch": 21,
+      "seqlen": 32640,
+      "magi_effective_ms": 12.038857142688796,
+      "lazy_effective_ms": 10.70026313822215
+    },
+    {
+      "rank": 4,
+      "batch": 22,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.257052723108405,
+      "lazy_effective_ms": 10.151772860117685
+    },
+    {
+      "rank": 4,
+      "batch": 23,
+      "seqlen": 32512,
+      "magi_effective_ms": 6.359928649703707,
+      "lazy_effective_ms": 4.5509269228130975
+    },
+    {
+      "rank": 4,
+      "batch": 24,
+      "seqlen": 32384,
+      "magi_effective_ms": 11.25314632679517,
+      "lazy_effective_ms": 9.51478535522981
+    },
+    {
+      "rank": 4,
+      "batch": 25,
+      "seqlen": 32768,
+      "magi_effective_ms": 6.707570668258769,
+      "lazy_effective_ms": 5.619573258488178
+    },
+    {
+      "rank": 4,
+      "batch": 26,
+      "seqlen": 32640,
+      "magi_effective_ms": 25.713371319399425,
+      "lazy_effective_ms": 20.876473127805937
+    },
+    {
+      "rank": 4,
+      "batch": 27,
+      "seqlen": 32768,
+      "magi_effective_ms": 16.130003471364045,
+      "lazy_effective_ms": 14.117777355832462
+    },
+    {
+      "rank": 4,
+      "batch": 28,
+      "seqlen": 32256,
+      "magi_effective_ms": 24.583420131836938,
+      "lazy_effective_ms": 22.084379664314632
+    },
+    {
+      "rank": 4,
+      "batch": 29,
+      "seqlen": 32768,
+      "magi_effective_ms": 12.94726447785323,
+      "lazy_effective_ms": 11.44414365574101
+    },
+    {
+      "rank": 4,
+      "batch": 30,
+      "seqlen": 32640,
+      "magi_effective_ms": 17.47932736457743,
+      "lazy_effective_ms": 14.913052291420051
+    },
+    {
+      "rank": 5,
+      "batch": 1,
+      "seqlen": 32768,
+      "magi_effective_ms": 12.074190562252522,
+      "lazy_effective_ms": 10.916167203994842
+    },
+    {
+      "rank": 5,
+      "batch": 2,
+      "seqlen": 32640,
+      "magi_effective_ms": 14.591488898235163,
+      "lazy_effective_ms": 12.369008542011805
+    },
+    {
+      "rank": 5,
+      "batch": 3,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.970561485619317,
+      "lazy_effective_ms": 10.523291825227556
+    },
+    {
+      "rank": 5,
+      "batch": 4,
+      "seqlen": 32768,
+      "magi_effective_ms": 10.286495152635416,
+      "lazy_effective_ms": 8.729008981479735
+    },
+    {
+      "rank": 5,
+      "batch": 5,
+      "seqlen": 32384,
+      "magi_effective_ms": 11.864272394199348,
+      "lazy_effective_ms": 10.015608254366262
+    },
+    {
+      "rank": 5,
+      "batch": 6,
+      "seqlen": 32640,
+      "magi_effective_ms": 47.38253080341557,
+      "lazy_effective_ms": 33.300630722404115
+    },
+    {
+      "rank": 5,
+      "batch": 7,
+      "seqlen": 32640,
+      "magi_effective_ms": 24.152605816077912,
+      "lazy_effective_ms": 22.911738446232434
+    },
+    {
+      "rank": 5,
+      "batch": 8,
+      "seqlen": 32768,
+      "magi_effective_ms": 18.755510565872964,
+      "lazy_effective_ms": 13.693730716781321
+    },
+    {
+      "rank": 5,
+      "batch": 9,
+      "seqlen": 32768,
+      "magi_effective_ms": 6.6270799612533935,
+      "lazy_effective_ms": 5.285734750020141
+    },
+    {
+      "rank": 5,
+      "batch": 10,
+      "seqlen": 32640,
+      "magi_effective_ms": 12.266008782500585,
+      "lazy_effective_ms": 10.728956473763285
+    },
+    {
+      "rank": 5,
+      "batch": 11,
+      "seqlen": 32640,
+      "magi_effective_ms": 16.913184786795934,
+      "lazy_effective_ms": 13.80169770310218
+    },
+    {
+      "rank": 5,
+      "batch": 12,
+      "seqlen": 32640,
+      "magi_effective_ms": 11.401689403242111,
+      "lazy_effective_ms": 10.11489894275093
+    },
+    {
+      "rank": 5,
+      "batch": 13,
+      "seqlen": 32640,
+      "magi_effective_ms": 13.325515182762645,
+      "lazy_effective_ms": 11.63338833059177
+    },
+    {
+      "rank": 5,
+      "batch": 14,
+      "seqlen": 32640,
+      "magi_effective_ms": 16.68935476605086,
+      "lazy_effective_ms": 14.597057031233605
+    },
+    {
+      "rank": 5,
+      "batch": 15,
+      "seqlen": 32512,
+      "magi_effective_ms": 26.378388595114345,
+      "lazy_effective_ms": 20.125084307604244
+    },
+    {
+      "rank": 5,
+      "batch": 16,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.95288677032405,
+      "lazy_effective_ms": 10.864545216775303
+    },
+    {
+      "rank": 5,
+      "batch": 17,
+      "seqlen": 32768,
+      "magi_effective_ms": 28.936220803536234,
+      "lazy_effective_ms": 27.544003036963826
+    },
+    {
+      "rank": 5,
+      "batch": 18,
+      "seqlen": 32384,
+      "magi_effective_ms": 9.875385060963335,
+      "lazy_effective_ms": 8.785476742616767
+    },
+    {
+      "rank": 5,
+      "batch": 19,
+      "seqlen": 32384,
+      "magi_effective_ms": 19.028248891843567,
+      "lazy_effective_ms": 15.559214111122676
+    },
+    {
+      "rank": 5,
+      "batch": 20,
+      "seqlen": 32768,
+      "magi_effective_ms": 10.889348105535962,
+      "lazy_effective_ms": 9.566498277924923
+    },
+    {
+      "rank": 5,
+      "batch": 21,
+      "seqlen": 32640,
+      "magi_effective_ms": 7.080803061394601,
+      "lazy_effective_ms": 5.3787352243777455
+    },
+    {
+      "rank": 5,
+      "batch": 22,
+      "seqlen": 32384,
+      "magi_effective_ms": 7.327975330494427,
+      "lazy_effective_ms": 5.542361745206413
+    },
+    {
+      "rank": 5,
+      "batch": 23,
+      "seqlen": 32768,
+      "magi_effective_ms": 17.895351799087116,
+      "lazy_effective_ms": 15.08666961555095
+    },
+    {
+      "rank": 5,
+      "batch": 24,
+      "seqlen": 32640,
+      "magi_effective_ms": 29.901020863519168,
+      "lazy_effective_ms": 24.952146237097196
+    },
+    {
+      "rank": 5,
+      "batch": 25,
+      "seqlen": 31744,
+      "magi_effective_ms": 11.654927295409225,
+      "lazy_effective_ms": 10.057399620725928
+    },
+    {
+      "rank": 5,
+      "batch": 26,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.177315481323832,
+      "lazy_effective_ms": 9.808955412683714
+    },
+    {
+      "rank": 5,
+      "batch": 27,
+      "seqlen": 32640,
+      "magi_effective_ms": 12.091698744007815,
+      "lazy_effective_ms": 10.451987101379553
+    },
+    {
+      "rank": 5,
+      "batch": 28,
+      "seqlen": 32128,
+      "magi_effective_ms": 17.440791814258755,
+      "lazy_effective_ms": 14.849158913585299
+    },
+    {
+      "rank": 5,
+      "batch": 29,
+      "seqlen": 31616,
+      "magi_effective_ms": 5.928552944959368,
+      "lazy_effective_ms": 4.613771922849099
+    },
+    {
+      "rank": 5,
+      "batch": 30,
+      "seqlen": 32512,
+      "magi_effective_ms": 13.841870617637111,
+      "lazy_effective_ms": 12.087658214897202
+    },
+    {
+      "rank": 6,
+      "batch": 1,
+      "seqlen": 32640,
+      "magi_effective_ms": 16.46515799811386,
+      "lazy_effective_ms": 14.067936536815303
+    },
+    {
+      "rank": 6,
+      "batch": 2,
+      "seqlen": 32256,
+      "magi_effective_ms": 8.779481865345069,
+      "lazy_effective_ms": 7.198547874520846
+    },
+    {
+      "rank": 6,
+      "batch": 3,
+      "seqlen": 32384,
+      "magi_effective_ms": 17.285641793942315,
+      "lazy_effective_ms": 14.391764845792384
+    },
+    {
+      "rank": 6,
+      "batch": 4,
+      "seqlen": 32768,
+      "magi_effective_ms": 51.32153694667825,
+      "lazy_effective_ms": 31.22338157956609
+    },
+    {
+      "rank": 6,
+      "batch": 5,
+      "seqlen": 32768,
+      "magi_effective_ms": 16.739776903500218,
+      "lazy_effective_ms": 14.37230482696456
+    },
+    {
+      "rank": 6,
+      "batch": 6,
+      "seqlen": 32256,
+      "magi_effective_ms": 19.788695655869528,
+      "lazy_effective_ms": 16.625912992667153
+    },
+    {
+      "rank": 6,
+      "batch": 7,
+      "seqlen": 32384,
+      "magi_effective_ms": 25.04135585465817,
+      "lazy_effective_ms": 21.93856526991658
+    },
+    {
+      "rank": 6,
+      "batch": 8,
+      "seqlen": 32512,
+      "magi_effective_ms": 20.183217491162527,
+      "lazy_effective_ms": 18.927816074301674
+    },
+    {
+      "rank": 6,
+      "batch": 9,
+      "seqlen": 32128,
+      "magi_effective_ms": 11.396646716848396,
+      "lazy_effective_ms": 10.171045354331948
+    },
+    {
+      "rank": 6,
+      "batch": 10,
+      "seqlen": 32640,
+      "magi_effective_ms": 16.60333109727503,
+      "lazy_effective_ms": 13.627415548278604
+    },
+    {
+      "rank": 6,
+      "batch": 11,
+      "seqlen": 32768,
+      "magi_effective_ms": 12.998717624333926,
+      "lazy_effective_ms": 11.508011431237062
+    },
+    {
+      "rank": 6,
+      "batch": 12,
+      "seqlen": 32640,
+      "magi_effective_ms": 17.346829988119943,
+      "lazy_effective_ms": 15.750084371432191
+    },
+    {
+      "rank": 6,
+      "batch": 13,
+      "seqlen": 32640,
+      "magi_effective_ms": 7.791755996862945,
+      "lazy_effective_ms": 6.028874624682733
+    },
+    {
+      "rank": 6,
+      "batch": 14,
+      "seqlen": 32768,
+      "magi_effective_ms": 17.23600752239786,
+      "lazy_effective_ms": 15.688910078345911
+    },
+    {
+      "rank": 6,
+      "batch": 15,
+      "seqlen": 32640,
+      "magi_effective_ms": 17.093427915530885,
+      "lazy_effective_ms": 15.467456321093469
+    },
+    {
+      "rank": 6,
+      "batch": 16,
+      "seqlen": 32640,
+      "magi_effective_ms": 11.694740043561458,
+      "lazy_effective_ms": 8.982719880721024
+    },
+    {
+      "rank": 6,
+      "batch": 17,
+      "seqlen": 32512,
+      "magi_effective_ms": 11.993483479149683,
+      "lazy_effective_ms": 10.466249566117355
+    },
+    {
+      "rank": 6,
+      "batch": 18,
+      "seqlen": 32768,
+      "magi_effective_ms": 10.631772547144163,
+      "lazy_effective_ms": 8.679115355739617
+    },
+    {
+      "rank": 6,
+      "batch": 19,
+      "seqlen": 32640,
+      "magi_effective_ms": 8.545359102291584,
+      "lazy_effective_ms": 7.702676682985907
+    },
+    {
+      "rank": 6,
+      "batch": 20,
+      "seqlen": 32512,
+      "magi_effective_ms": 13.055125112070264,
+      "lazy_effective_ms": 10.399167024225893
+    },
+    {
+      "rank": 6,
+      "batch": 21,
+      "seqlen": 32256,
+      "magi_effective_ms": 11.411028576357001,
+      "lazy_effective_ms": 10.273285261988413
+    },
+    {
+      "rank": 6,
+      "batch": 22,
+      "seqlen": 32640,
+      "magi_effective_ms": 18.569004929579098,
+      "lazy_effective_ms": 16.83679372171915
+    },
+    {
+      "rank": 6,
+      "batch": 23,
+      "seqlen": 32384,
+      "magi_effective_ms": 22.387496359213557,
+      "lazy_effective_ms": 18.394040554001265
+    },
+    {
+      "rank": 6,
+      "batch": 24,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.287600924814633,
+      "lazy_effective_ms": 9.588866689149288
+    },
+    {
+      "rank": 6,
+      "batch": 25,
+      "seqlen": 32768,
+      "magi_effective_ms": 13.359004332766443,
+      "lazy_effective_ms": 11.607163595803874
+    },
+    {
+      "rank": 6,
+      "batch": 26,
+      "seqlen": 32512,
+      "magi_effective_ms": 11.853007245751607,
+      "lazy_effective_ms": 10.864062908160754
+    },
+    {
+      "rank": 6,
+      "batch": 27,
+      "seqlen": 32640,
+      "magi_effective_ms": 26.835715258370172,
+      "lazy_effective_ms": 21.156572699484144
+    },
+    {
+      "rank": 6,
+      "batch": 28,
+      "seqlen": 32640,
+      "magi_effective_ms": 20.83085212204025,
+      "lazy_effective_ms": 18.53139739428343
+    },
+    {
+      "rank": 6,
+      "batch": 29,
+      "seqlen": 32512,
+      "magi_effective_ms": 11.137058996495611,
+      "lazy_effective_ms": 10.034297609237921
+    },
+    {
+      "rank": 6,
+      "batch": 30,
+      "seqlen": 32768,
+      "magi_effective_ms": 7.717665576540096,
+      "lazy_effective_ms": 6.172443993273031
+    },
+    {
+      "rank": 7,
+      "batch": 1,
+      "seqlen": 32384,
+      "magi_effective_ms": 12.551277166624295,
+      "lazy_effective_ms": 11.154455758845646
+    },
+    {
+      "rank": 7,
+      "batch": 2,
+      "seqlen": 31616,
+      "magi_effective_ms": 13.295724875786826,
+      "lazy_effective_ms": 11.460794853176434
+    },
+    {
+      "rank": 7,
+      "batch": 3,
+      "seqlen": 32640,
+      "magi_effective_ms": 18.52331219375987,
+      "lazy_effective_ms": 15.611990331912313
+    },
+    {
+      "rank": 7,
+      "batch": 4,
+      "seqlen": 32640,
+      "magi_effective_ms": 11.702355233690875,
+      "lazy_effective_ms": 10.360749502587568
+    },
+    {
+      "rank": 7,
+      "batch": 5,
+      "seqlen": 32640,
+      "magi_effective_ms": 12.064949639412198,
+      "lazy_effective_ms": 10.752454672600905
+    },
+    {
+      "rank": 7,
+      "batch": 6,
+      "seqlen": 32640,
+      "magi_effective_ms": 23.100504482486087,
+      "lazy_effective_ms": 21.84057376733603
+    },
+    {
+      "rank": 7,
+      "batch": 7,
+      "seqlen": 32384,
+      "magi_effective_ms": 25.607476673788025,
+      "lazy_effective_ms": 20.78649610854335
+    },
+    {
+      "rank": 7,
+      "batch": 8,
+      "seqlen": 32640,
+      "magi_effective_ms": 10.89612864744091,
+      "lazy_effective_ms": 9.656095336017017
+    },
+    {
+      "rank": 7,
+      "batch": 9,
+      "seqlen": 32768,
+      "magi_effective_ms": 16.957225836711928,
+      "lazy_effective_ms": 14.43678959386662
+    },
+    {
+      "rank": 7,
+      "batch": 10,
+      "seqlen": 32640,
+      "magi_effective_ms": 7.657589714959145,
+      "lazy_effective_ms": 5.9103162236026465
+    },
+    {
+      "rank": 7,
+      "batch": 11,
+      "seqlen": 32384,
+      "magi_effective_ms": 12.904104438801129,
+      "lazy_effective_ms": 11.60348419569506
+    },
+    {
+      "rank": 7,
+      "batch": 12,
+      "seqlen": 32768,
+      "magi_effective_ms": 8.073488803991227,
+      "lazy_effective_ms": 6.335138534591596
+    },
+    {
+      "rank": 7,
+      "batch": 13,
+      "seqlen": 32640,
+      "magi_effective_ms": 9.958373529530594,
+      "lazy_effective_ms": 8.593961111054398
+    },
+    {
+      "rank": 7,
+      "batch": 14,
+      "seqlen": 32768,
+      "magi_effective_ms": 17.757954232014246,
+      "lazy_effective_ms": 15.13851454179405
+    },
+    {
+      "rank": 7,
+      "batch": 15,
+      "seqlen": 32768,
+      "magi_effective_ms": 16.13378412733523,
+      "lazy_effective_ms": 13.75912619688361
+    },
+    {
+      "rank": 7,
+      "batch": 16,
+      "seqlen": 32384,
+      "magi_effective_ms": 11.768091206031619,
+      "lazy_effective_ms": 10.591856410635607
+    },
+    {
+      "rank": 7,
+      "batch": 17,
+      "seqlen": 32640,
+      "magi_effective_ms": 14.517174350989,
+      "lazy_effective_ms": 13.190457085208166
+    },
+    {
+      "rank": 7,
+      "batch": 18,
+      "seqlen": 32640,
+      "magi_effective_ms": 27.948814046644845,
+      "lazy_effective_ms": 22.38772619524111
+    },
+    {
+      "rank": 7,
+      "batch": 19,
+      "seqlen": 32768,
+      "magi_effective_ms": 11.925178793339661,
+      "lazy_effective_ms": 9.891753493792738
+    },
+    {
+      "rank": 7,
+      "batch": 20,
+      "seqlen": 32384,
+      "magi_effective_ms": 13.742488075706346,
+      "lazy_effective_ms": 11.914809999961784
+    },
+    {
+      "rank": 7,
+      "batch": 21,
+      "seqlen": 32384,
+      "magi_effective_ms": 9.812998433033512,
+      "lazy_effective_ms": 8.64089107911573
+    },
+    {
+      "rank": 7,
+      "batch": 22,
+      "seqlen": 32768,
+      "magi_effective_ms": 13.45958825578953,
+      "lazy_effective_ms": 11.652327928657895
+    },
+    {
+      "rank": 7,
+      "batch": 23,
+      "seqlen": 32640,
+      "magi_effective_ms": 11.988242674556437,
+      "lazy_effective_ms": 10.404874964335555
+    },
+    {
+      "rank": 7,
+      "batch": 24,
+      "seqlen": 32640,
+      "magi_effective_ms": 10.62730220725929,
+      "lazy_effective_ms": 8.949589853486152
+    },
+    {
+      "rank": 7,
+      "batch": 25,
+      "seqlen": 32512,
+      "magi_effective_ms": 8.925314787659008,
+      "lazy_effective_ms": 7.714681319813184
+    },
+    {
+      "rank": 7,
+      "batch": 26,
+      "seqlen": 32512,
+      "magi_effective_ms": 11.987480780198279,
+      "lazy_effective_ms": 10.773814049085049
+    },
+    {
+      "rank": 7,
+      "batch": 27,
+      "seqlen": 32768,
+      "magi_effective_ms": 25.806190773105257,
+      "lazy_effective_ms": 20.83269976792994
+    },
+    {
+      "rank": 7,
+      "batch": 28,
+      "seqlen": 32640,
+      "magi_effective_ms": 11.22947746008228,
+      "lazy_effective_ms": 9.936111828879651
+    },
+    {
+      "rank": 7,
+      "batch": 29,
+      "seqlen": 32768,
+      "magi_effective_ms": 24.03958716923446,
+      "lazy_effective_ms": 22.692727814363387
+    },
+    {
+      "rank": 7,
+      "batch": 30,
+      "seqlen": 32640,
+      "magi_effective_ms": 22.406323233536085,
+      "lazy_effective_ms": 18.84491040550568
+    }
+  ],
+  "separate_experiments": {
+    "reorder": {
+      "base": "unplanned paired range kernel",
+      "baseline_ms": 14.9056,
+      "candidate_ms": 13.5146,
+      "time_reduction_pct": 9.33
+    },
+    "reverse": {
+      "base": "reordered Q-major forward traversal, frozen preparation",
+      "baseline_ms": 13.5383,
+      "candidate_ms": 13.3711,
+      "time_reduction_pct": 1.235
+    },
+    "pair_reader": {
+      "base": "previous complete range implementation",
+      "time_reduction_pct": 0.172
+    },
+    "combined_reorder_reverse_estimate": {
+      "time_reduction_pct_approx": [
+        10,
+        11
+      ],
+      "direct_measurement": false
+    }
+  },
+  "limits": [
+    "operator benchmark, not whole training step",
+    "no stock-unmodified-FA4 full-corpus comparison in this report",
+    "algorithm animations are not measured GPU timelines"
+  ]
+}

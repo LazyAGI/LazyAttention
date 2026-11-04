@@ -1,9 +1,9 @@
 'use strict';
 let forwardPracticePage=2,backwardPracticePage=4;
-const mainLabels=['1 · Forward 原理','2 · 输入与分组','3 · Forward 实践','4 · 矩阵链求导','5 · Backward 原理','6 · Backward 实践','7 · Mask 图谱'];
-const mainIndex=()=>[0,1,2,4,5,2,5,3,6][page];
-const mainPages=()=>[0,1,forwardPracticePage,7,3,backwardPracticePage,8];
-const lessonHashes=['#attention','#mask','#forward-practice-magi','#backward','#backward-practice-magi','#forward-practice-fa4','#backward-practice-fa4','#matrix-backward','#mask-atlas'];
+const mainLabels=['1 · Forward 原理','2 · 输入与分组','3 · Forward 实践','4 · 矩阵链求导','5 · Backward 原理','6 · Backward 实践','7 · Mask 图谱','8 · 优化之路'];
+const mainIndex=()=>[0,1,2,4,5,2,5,3,6,7][page];
+const mainPages=()=>[0,1,forwardPracticePage,7,3,backwardPracticePage,8,9];
+const lessonHashes=['#attention','#mask','#forward-practice-magi','#backward','#backward-practice-magi','#forward-practice-fa4','#backward-practice-fa4','#matrix-backward','#mask-atlas','#optimizations'];
 function renderLessonNavigation(){const ix=mainIndex(),last=mainLabels.length-1,practice=ix===2||ix===5,back=ix===5,ids=back?[4,6]:[2,5];$('nav').innerHTML=mainLabels.map((label,i)=>btn(label,`page:${mainPages()[i]}`,`aria-pressed="${ix===i}"`)).join('');$('practice-tabs').hidden=!practice;$('practice-tabs').innerHTML=practice?`<div class="practice-heading"><b>${back?'Backward':'Forward'} 实践</b><span>同一份输入与可见性，对照两种实现；各自保留选块和播放位置。</span></div><div role="tablist" aria-label="${back?'Backward':'Forward'} 实现">${ids.map((id,i)=>btn(i?'FA4':'MAGI',`page:${id}`,`role="tab" id="backend-tab-${id}" aria-selected="${page===id}" aria-controls="lesson-content" tabindex="${page===id?0:-1}"`)).join('')}</div>`:'';if(practice){$('lesson-content').setAttribute('role','tabpanel');$('lesson-content').setAttribute('aria-labelledby',`backend-tab-${page}`)}else{$('lesson-content').removeAttribute('role');$('lesson-content').removeAttribute('aria-labelledby')}$('back').disabled=ix===0;$('forward').disabled=ix===last;$('back').textContent=ix>0?'← '+mainLabels[ix-1].split(' · ')[1]:'← 上一章';$('forward').textContent=ix<last?mainLabels[ix+1].split(' · ')[1]+' →':'下一章 →';}
 function addLessonGuide(){let html='';
 if(page===0)html=`<div class="lesson-primer"><b>先把 Attention 看成两次矩阵乘法</b><div class="formula">S = QKᵀ / √d + B　　P = softmax_row(S)　　O = PV</div><p>Q、K 的每行是一个 token 的 d 维向量；S 的 (i,j) 是 Q_i 与 K_j 的匹配分数。√d 用来控制分数尺度；B 对可见位置取 0，对禁止位置取 −∞。softmax 沿每一行的全部可见 K 归一化，P 再对 V 加权求和。</p><p><b>为什么能按块算？</b>矩阵乘法可以分块：S_IJ = Q_I K_Jᵀ/√d + B_IJ，O_I = Σ_J P_IJ V_J。固定一块 Q/O，就能逐块读取 K/V 并累加；但 softmax 的分母跨越所有 J，必须用在线 softmax 维护共同的归一化状态。</p></div>`;
