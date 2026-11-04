@@ -125,7 +125,15 @@ function optPrefetchDraw(){
 function optWorkHTML(id,number,title,contribution,body,extra=''){
  return `<section class="ov-work" id="opt-work-${id}"><div class="ov-work-heading"><span class="ov-work-number">${number}</span><div><h3>${title}</h3><span class="ov-contribution">${contribution}</span></div></div>${body}${extra}${optControls(id)}<div id="opt-board-${id}"></div><p class="ov-scope" id="opt-note-${id}" aria-live="polite"></p></section>`;
 }
-function optUpdate(id){const max=optExtent[id];optState[id]=Math.min(max,Math.max(0,optState[id]));({schedule:optScheduleDraw,mapping:optMappingDraw,cache:optCacheDraw,prefetch:optPrefetchDraw}[id])();const slider=document.querySelector(`[data-opt-slider="${id}"]`);if(slider)slider.value=optState[id];const label=$(`opt-label-${id}`);if(label)label.textContent=id==='cache'?`已读 ${optState[id]}/18`:`步骤 ${optState[id]+1}/${max+1}`;}
+function optUpdate(id){
+ const max=optExtent[id],host=$(`opt-board-${id}`),scrollLeft=host?.querySelector('.board')?.scrollLeft||0;
+ optState[id]=Math.min(max,Math.max(0,optState[id]));
+ ({schedule:optScheduleDraw,mapping:optMappingDraw,cache:optCacheDraw,prefetch:optPrefetchDraw}[id])();
+ const board=host?.querySelector('.board');if(board)board.scrollLeft=scrollLeft;
+ const slider=document.querySelector(`[data-opt-slider="${id}"]`);if(slider)slider.value=optState[id];
+ const label=$(`opt-label-${id}`);if(label)label.textContent=id==='cache'?`已读 ${optState[id]}/18`:`步骤 ${optState[id]+1}/${max+1}`;
+}
+
 function renderOptimizations(){
  $('intro').innerHTML='<h2>8 · LazyAttention：总收益与四项优化工作</h2><p>同一份mask、同样的Attention与梯度，改变寻址、任务组织和数据复用。默认：<b>重排开、切分关、CTA内Q优先＋完整倒序、不交错。</b></p>';
  $('controls').innerHTML='';$('status').textContent='';
