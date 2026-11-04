@@ -102,6 +102,10 @@ function optPrefetchDraw(){
 function optWorkHTML(w){
  return `<section class="ov-work" id="opt-work-${w.id}"><div class="ov-work-heading"><span class="ov-work-number">${w.number}</span><h3>${w.title}</h3></div><div class="ov-teach-step"><h4>1 · 先看一个小例子</h4>${w.example}</div><div class="ov-teach-step"><h4>2 · 再改一件事</h4>${w.change}</div><div class="ov-teach-step"><h4>3 · 跟着动画走一遍</h4><ol class="ov-walk">${w.guide.map(x=>`<li>${x}</li>`).join('')}</ol>${w.extra||''}${optControls(w.id)}<div id="opt-board-${w.id}"></div><p class="ov-scope" id="opt-note-${w.id}" aria-live="polite"></p></div><div class="ov-teach-step ov-benefit"><h4>4 · 省下了什么</h4><p>${w.benefit}</p></div><details class="ov-local-detail"><summary>实现细节</summary>${w.details}</details><div class="ov-bridge"><h4>5 · 带着下一个问题往前走</h4><p>${w.bridge}</p></div></section>`;
 }
+function optLayoutExample(){
+ const c=maskAtlasData.cases.find(c=>c.rank===3&&c.batch===6);
+ return `<figure class="ov-layout-example"><figcaption><b>同一组数据，GEN/UND排序前后</b><br>取自Mask图谱的rank 3 / batch 6；浅蓝表示允许Attention，灰色表示被mask。横轴为K/V位置，纵轴为Q位置（向下增加）。</figcaption><div class="atlas-pair">${atlasSvg(c.ranges_before,c.runs_before,c.S,'排序前：保留原始样本顺序')}${atlasSvg(c.ranges_after,c.runs_after,c.S,'排序后：GEN在前，UND在后')}</div><p>先看底部色条：原来交替出现的GEN（紫色）与UND（绿色），排序后各自归到一侧。再看浅蓝区域：同样的Attention依赖被重新排到不同坐标，同一样本对应的Q行也被拆到GEN区与UND区。固定一列K/V向下看，需要读取的Q区间因此变得分散。</p><p><b>接下来的优化不把右图张量搬回左图。</b>我们保留右图的物理存放方式，通过行映射按逻辑样本组织计算。图中包含实际捕获的边界与填充，因此不是等长的A/B示意；排序前后token与可见关系保持一致。</p></figure>`;
+}
 function optWorkLessons(){return [
  {id:'schedule',number:'01',title:'让重任务早一点开始',
  example:'<p>有3个工作组，依次领到长度为2、1、2、1、8、7的任务。前几个很快结束，最后两个却还在运行。<b>所有工作组完成的时刻，由最后一个长任务决定。</b>其他工作组即使已经空闲，也不能让整次计算提前结束。</p>',
@@ -111,7 +115,7 @@ function optWorkLessons(){return [
  details:'<p>当前计划按逻辑样本分组，以组内最大任务的Q tile数估计负载，按64-tile档位降序稳定排列。计划仅改变任务ID表，不移动激活张量；常驻CTA持续从队列领取任务。相同形状、mask和分组可以复用这张表。</p>',
  bridge:'现在任务更均衡了，但每个工作组开始干活时，还要找到Q、K、V所在的位置。逻辑上相邻的数据，真的存放在相邻地址吗？'},
  {id:'mapping',number:'02',title:'分清计算顺序和数据存放位置',
- example:'<p>先回到双流布局：为了分别执行GEN与UND两条分支，数据先按GEN/UND归组存放，而不是把同一样本的所有token放在一起。例如，物理内存可能依次放着<b>A的UND、B的UND、A的GEN、B的GEN</b>。样本A原本相邻的两部分，现在隔着样本B的数据。</p><p>Attention仍然要按样本和mask寻找依赖。反向计算固定一块K/V、遍历它可见的Q时，同一样本的Q/dO便可能散落在多个物理区间。如果计算也沿着GEN/UND的物理排列推进，相邻K/V任务对同一份Q/dO的读取之间，就可能穿插其他样本的数据访问。</p><p><b>这为什么会慢？</b>L2缓存只能暂存有限的数据。刚读过的Q/dO如果很久才再次用到，中间读入的其他数据可能已经把它挤出去，下次就得重新从显存取。问题不只是“地址不连续”，还包括<b>本来可以复用的数据，访问得不够集中</b>。</p>',
+ example:'<p>先回到双流布局：为了分别执行GEN与UND两条分支，数据先按GEN/UND归组存放，而不是把同一样本的所有token放在一起。例如，物理内存可能依次放着<b>A的GEN、B的GEN、A的UND、B的UND</b>。样本A原本相邻的两部分，现在隔着样本B的数据。</p>'+optLayoutExample()+'<p>Attention仍然要按样本和mask寻找依赖。反向计算固定一块K/V、遍历它可见的Q时，同一样本的Q/dO便可能散落在多个物理区间。如果计算也沿着GEN/UND的物理排列推进，相邻K/V任务对同一份Q/dO的读取之间，就可能穿插其他样本的数据访问。</p><p><b>这为什么会慢？</b>L2缓存只能暂存有限的数据。刚读过的Q/dO如果很久才再次用到，中间读入的其他数据可能已经把它挤出去，下次就得重新从显存取。问题不只是“地址不连续”，还包括<b>本来可以复用的数据，访问得不够集中</b>。</p>',
  change:'<p>因此，把“下一步算谁”和“去哪里读”分开：<b>计算按逻辑样本组织，数据继续保留GEN/UND物理布局</b>。同一样本需要的Q行在逻辑空间里连起来，再用行映射找到原来的物理位置；无需先复制整张张量来恢复样本顺序。哪些行可以参与计算，仍由mask决定。</p><p>例如，样本A需要的64行Q，前32行在物理行0–31，后32行在96–127。逻辑遍历从第31行走到第32行时，实际地址从31跳到96。接下来要解决的，就是怎样便宜地表达这次跳转：</p><div class="ov-three-cases"><p><b>一段连续：</b>记住起点，后续位置用“起点＋偏移”得到。</p><p><b>两段连续：</b>再记一个分界和第二个起点；到分界前沿第一段走，到分界后跳到第二段。</p><p><b>index：</b>如果分散成更多段，就保留一张表，逐行查出物理位置。这保证不规则布局也能正确访问。</p></div>',
  guide:['上排始终是同一组连续的逻辑行；下排按物理地址排列。每格代表8行，箭头连接它们。','从“一段连续”开始，注意箭头整体落在一个区间；再看“两段连续”，观察L4（第5格）怎样跳到后面的物理区间。','移动高亮到其他逻辑格，最后看index如何依靠查表定位。三个例子都没有复制或搬动整张张量。'],
  benefit:'按逻辑样本组织计算，让相关数据的访问更集中，为L2复用创造条件；用连续区间描述地址，则省去逐行索引读取与重复地址计算。两者配合，也避免了整张张量重排的搬运成本。地址描述本身不会让缓存自动命中，真正的复用还要看任务之间何时再次读到相同数据。',
