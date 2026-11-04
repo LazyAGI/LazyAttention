@@ -107,4 +107,3 @@ def ranges_from_metadata(metadata, sequence_length):
         merged.append(current)
     result = np.asarray(merged, dtype=np.int32).reshape(-1, 5)
     return result[:, :2].copy(), result[:, 2:4].copy(), result[:, 4].copy()
-
