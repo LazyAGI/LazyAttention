@@ -24,6 +24,7 @@ jobs:
       - name: Validate static site
         run: |
           python3 scripts/check_site.py
+          node scripts/check_optimization_models.js
           find docs/tutorials/attention-kernel-walkthrough -maxdepth 1 -name '*.js' -print0 \
             | xargs -0 -n1 node --check
 
