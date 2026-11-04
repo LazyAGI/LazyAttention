@@ -21,7 +21,7 @@ for result_file in sorted(a.results.glob('rank-*-batch-*.json')):
  seqlen=pc.numel()*128;heads=expected['shape'][2]//4
  prepared=SimpleNamespace(seqlen=seqlen,task_counts_cpu=cpu,backward_plan=SimpleNamespace(block_size=(64,128),mask_block_cnt=pc,full_block_cnt=fc))
  docs=m['metadata']['mot_document_ids'][ix['index'].long()].to(torch.int32).contiguous()
- def make():return plan_tasks(prepared,docs,seqlen,heads,reorder=True,split=True)
+ def make():return plan_tasks(prepared,docs,seqlen,heads)
  for _ in range(2):actual=make()
  assert actual is not None and not actual.split
  digest=hashlib.sha256(actual.order.cpu().numpy().tobytes()).hexdigest()

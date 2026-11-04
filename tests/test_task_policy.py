@@ -12,7 +12,7 @@ class JointPolicyTests(unittest.TestCase):
         self.assertEqual(select_task_strategy(replace(self.f,max_q_tiles=69,reorder_changes_order=False)).strategy,'none')
         low=replace(self.f,seqlen=512,kv_heads=2,tasks=8,active_tasks=8,max_q_tiles=8,
                     mean_active_q_tiles=5.,total_q_tiles=40,reorder_changes_order=True)
-        d=select_task_strategy(low)
+        d=select_task_strategy(low,split=True)
         self.assertEqual((d.strategy,d.split_size),('split',2))
     def test_mask_and_occupancy_change_choice(self):
         self.assertEqual(select_task_strategy(replace(self.f,full_fraction=.2)).strategy,'reorder')
@@ -32,7 +32,7 @@ class JointPolicyTests(unittest.TestCase):
         low=replace(self.f,max_q_tiles=8,reorder_changes_order=False,tasks=66,active_tasks=66,
                     mean_active_q_tiles=5.,total_q_tiles=330)
         self.assertEqual(select_task_strategy(low).strategy,'none')
-        self.assertEqual(select_task_strategy(replace(low,tasks=65,active_tasks=65)).strategy,'split')
+        self.assertEqual(select_task_strategy(replace(low,tasks=65,active_tasks=65),split=True).strategy,'split')
         self.assertEqual(select_task_strategy(replace(low,tasks=8,active_tasks=8,mean_active_q_tiles=3.999)).strategy,'none')
     def test_short_nonidentity_order_still_reorders(self):
         self.assertEqual(select_task_strategy(replace(self.f,max_q_tiles=69)).strategy,'reorder')

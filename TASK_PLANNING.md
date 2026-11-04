@@ -1,7 +1,9 @@
 # Joint2x2 policy
 
-`plan_tasks(..., reorder=True, split=True, policy="auto")` enables a one-time
-choice among none/reorder/split/both. The two switches are permissions in auto
+`plan_tasks(...)` defaults to `reorder=True, split=False, policy="auto"`: prepare
+task reordering once and reuse the returned plan across executions. Explicitly
+passing `split=True` permits the retained split policy; `policy="manual"` keeps
+explicit split experiments available. The two switches are permissions in auto
 mode. Use `policy="manual"` for legacy explicit controls; no caller
 shape whitelist is needed. Both switches false returnsNone before inspecting
 inputs or allocating task metadata. The returned Tensor table is reused across
@@ -60,12 +62,12 @@ from lazy_attention.task_planning import plan_tasks
 # documents: int32/int64 logical-row document IDs; padding=-1.
 # Prepare once, before graph capture; reuse while mask/mapping/geometry match.
 plan = plan_tasks(prepared, documents, q.shape[1], k.shape[2],
-                  reorder=True, split=True, split_size=128)
+                  reorder=True, split=False, split_size=128)
 # Each activation/layer invocation uses its own q/k/v/out/dout/lse.
 dq, dk, dv = backward(q, k, v, out, dout, lse, prepared, task_plan=plan)
 ```
 
-With both switches false, `plan_tasks` immediately returns `None` without reading inputs, allocating metadata or launching GPU work. `backward(..., task_plan=None)` uses the unplanned compiled path and carries no task-order argument. A requested strategy can also return `None` when its workload bypass applies. Neither feature is enabled by default.
+With both switches false, `plan_tasks` immediately returns `None` without reading inputs, allocating metadata or launching GPU work. `backward(..., task_plan=None)` uses the unplanned compiled path and carries no task-order argument. A requested strategy can also return `None` when its workload bypass applies. Task reordering is enabled by default when calling `plan_tasks`; splitting is opt-in. `backward` consumes the explicitly prepared plan and never replans inside execution.
 
 Split plans hold immutable task bounds and sparse reduction indices. Unsplit tasks retain the existing BF16 gradient stores. Truly split tasks store private FP32 dK/dV fragments; a final FP32 reduction maps them back to physical rows and converts to BF16. dQ retains the existing FP32 atomic accumulation. Scratch gradients are recomputed on every execution; only metadata is reused. The public API supports graph replay; planning contains CPU work/device synchronization and must happen outside capture.
 

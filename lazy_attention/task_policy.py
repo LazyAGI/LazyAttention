@@ -30,7 +30,7 @@ class TaskDecision:
     def strategy(self):
         return ('none','split','reorder','both')[int(self.reorder)*2+int(self.split)]
 
-def select_task_strategy(features, *, reorder=True, split=True, split_size=128):
+def select_task_strategy(features, *, reorder=True, split=False, split_size=128):
     if split_size<1 or features.sm_count<1:
         raise ValueError('positive split_size and sm_count required')
     if not reorder and not split:

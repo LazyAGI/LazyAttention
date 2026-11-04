@@ -168,11 +168,12 @@ def plan_tasks(plan, documents, seqlen, kv_heads, *, reorder=False,
 _plan_tasks_manual = plan_tasks
 
 
-def plan_tasks(plan, documents, seqlen, kv_heads, *, reorder=False,
+def plan_tasks(plan, documents, seqlen, kv_heads, *, reorder=True,
                split=False, split_size=128, policy='auto', sm_count=None,
                diagnostics=None):
     """Choose a2x2 strategy once. None removes all task-plan arguments.
 
+    Reordering is enabled and splitting disabled by default.
     Flags permit optimizations; policy='manual' retains the previous explicit
     controls. Auto reads only immutable mask/shape metadata, never activations.
     All analysis, D2H/H2D and table construction are preparation cost /42.
