@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """One-time mask/row-map preparation, outside the measured GPU backward chain."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -52,6 +52,14 @@ class PreparedAttention:
     info: dict
     index: Any = None
     task_counts_cpu: Any = None
+    task_indices_cpu: Any = field(default=None, repr=False, compare=False)
+    q_reverse: bool = False
+    q_interleave: int = 0
+    head_major: bool = False
+    base_backward_plan: Any = field(default=None, repr=False, compare=False)
+    execution_options: Any = None
+    documents_cpu: Any = field(default=None, repr=False, compare=False)
+    execution_cache: dict = field(default_factory=dict, repr=False, compare=False)
 
 
 def _aux(mask, device):
@@ -73,7 +81,7 @@ def _aux(mask, device):
     return a, b
 
 
-def _sparse_plan(mask, m, n, backward, device, counts_out=None):
+def _sparse_plan(mask, m, n, backward, device, counts_out=None, indices_out=None):
     import numpy as np
     import torch
     from flash_attn.cute.block_sparsity import BlockSparseTensorsTorch
@@ -103,6 +111,8 @@ def _sparse_plan(mask, m, n, backward, device, counts_out=None):
         else:
             # No CPU list packing for an empty bucket. Keep CuTe's unit stride.
             gpu_indices = torch.empty((1, 1, groups, 0), dtype=torch.int32, device=device)
+        if indices_out is not None:
+            indices_out.append(indices if width else np.empty((1,1,groups,0),dtype=np.int32))
         return (torch.as_tensor(counts.reshape(1, 1, groups), device=device), gpu_indices, counts)
     pc, pi, pc_cpu = tensors(partial); fc, fi, fc_cpu = tensors(full)
     if counts_out is not None:
@@ -112,12 +122,17 @@ def _sparse_plan(mask, m, n, backward, device, counts_out=None):
         full_block_cnt=fc, full_block_idx=fi, block_size=(m,n))
 
 
-def prepare_attention(logical_mask, index=None, *, device='cuda', strategy='range'):
+def prepare_attention(logical_mask, index=None, *, device='cuda', strategy='range',
+                      documents=None, kv_heads=None, reorder=True, split=False,
+                      head_major=False, reverse=True, interleave=0):
     """Prepare a boolean[S,S] logical mask and optional logical→physical rows.
 
     q/k/v/out/dout use physical row order. The forward mask is transformed to
     that order; backward traverses the logical mask and decodes the descriptor.
     Preparation copies metadata to CPU once and is deliberately not graph-safe.
+    Defaults reorder tasks, disable splitting, and traverse Q-major in complete
+    reverse list order without interleave. documents are logical-row IDs;
+    supplying kv_heads also finishes cached task planning before Graph capture.
     """
     import torch
     if logical_mask.ndim != 2 or logical_mask.dtype != torch.bool:
@@ -139,7 +154,12 @@ def prepare_attention(logical_mask, index=None, *, device='cuda', strategy='rang
     desc = torch.tensor(packed, device=device, dtype=torch.int32) if strategy == 'range' else None
     row_index = index.to(device=device, dtype=torch.int32).contiguous() if strategy == 'index' else None
     info = {**info, "strategy": strategy, "row_mapping_bytes": 4 * (len(packed) if strategy == "range" else size)}
-    counts_cpu=[]
-    return PreparedAttention(size, desc, _aux(logical, device), _aux(physical, device),
+    counts_cpu=[]; indices_cpu=[]
+    prepared = PreparedAttention(size, desc, _aux(logical, device), _aux(physical, device),
         _sparse_plan(physical,128,128,False,device),
-        _sparse_plan(logical,64,128,True,device,counts_cpu), info, row_index, tuple(counts_cpu))
+        _sparse_plan(logical,64,128,True,device,counts_cpu,indices_cpu), info, row_index, tuple(counts_cpu),tuple(indices_cpu))
+
+    from .execution import prepare_execution
+    return prepare_execution(prepared, documents=documents, kv_heads=kv_heads,
+        reorder=reorder, split=split, head_major=head_major, reverse=reverse,
+        interleave=interleave)

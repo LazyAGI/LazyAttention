@@ -34,7 +34,7 @@ def case(a):
     if a.capture_root:
         plans={'range':f['prepared']}
     else:
-        plans={'range':prepare_attention(f['logical_mask'],f['index'],device=q.device)}
+        plans={'range':prepare_attention(f['logical_mask'],f['index'],device=q.device, reorder=False, reverse=False)}
     from lazy_attention.task_planning import plan_tasks, build_task_order, TaskPlan
     from lazy_attention.split_reduction import reduce_partials
     plan=plans['range'].backward_plan

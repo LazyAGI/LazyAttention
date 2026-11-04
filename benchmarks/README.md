@@ -189,3 +189,29 @@ fingerprint so analysis cannot silently pool the two layouts.
 The input mask is already resident on CPU. Mask encoding, row-map preparation,
 forward and attention backward are excluded. These percentages describe sparse
 list construction, not training throughput or the complete preparation API.
+
+## Full240 MAGI versus current defaults
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -m benchmarks.magi240 \
+  --capture-root /path/to/workload-audit --output-root results/magi240
+```
+
+Requires the240 captured mask/index pairs and layout event metadata (not shipped),
+a compatible MAGI install, and an exclusive80GB Hopper GPU. One persistent
+process preallocates GPU memory, releases it into the caching allocator and
+holds a live guard across cases. Defaults:16 timing blocks,4 cycles, one corpus
+round, no AA. Compares MAGI against reordered/unsplit/Q-major/full-reverse/plain
+LazyAttention. Extra range/task/traversal preparation is charged /42; common
+captured-mask preparation, forward and cold compilation remain outside scope.
+
+Historical factorial and index/paired runners explicitly prepare ascending,
+unplanned metadata, then apply their experimental factors. They do not silently
+inherit public API defaults and change the original independent variables.
+
+Public wiring check (correctness only):
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -m tests.check_default_execution \
+  --capture-root /path/to/workload-audit
+```

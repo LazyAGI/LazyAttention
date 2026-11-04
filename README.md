@@ -61,18 +61,33 @@ The GPU extras do not install or pin that FA4 source snapshot automatically.
 ### Use
 
 ```python
-from lazy_attention import prepare_attention, forward, backward
+from lazy_attention import prepare_attention, prepare_execution, forward, backward
 
 # logical_mask: bool[S,S]; index: int logical-to-physical permutation[S].
 # q/k/v/dout: physical row order [1,S,H,128], CUDA BF16.
-prepared = prepare_attention(logical_mask, index, device=q.device)
+prepared = prepare_attention(logical_mask, index, device=q.device,
+                             documents=logical_document_ids, kv_heads=k.shape[2])
+# Defaults: reorder=True, split=False, head_major=False,
+#           reverse=True (Full-reversed then Partial-reversed), interleave=0.
 out, lse = forward(q, k, v, prepared)
 dq, dk, dv = backward(q, k, v, out, dout, lse, prepared)
 
 # Independent pure-index baseline; prepare once outside measurement.
-baseline = prepare_attention(logical_mask, index, device=q.device, strategy="index")
+baseline = prepare_attention(logical_mask, index, device=q.device, strategy="index",
+                             reorder=False, reverse=False)
 dq0, dk0, dv0 = backward(q, k, v, out, dout, lse, baseline, variant="index")
 ```
+
+`documents` contains document IDs in logical row order. Omit it to use each
+KV128 tile as a separate scheduling group. Providing `kv_heads` finishes
+planning before CUDA Graph capture; otherwise the first eager `backward` caches
+one plan per KV head count. Subsequent executions do not replan. Mask, row
+mapping, document IDs and prepared metadata must remain immutable across reuse.
+`prepare_execution(prepared, documents=..., kv_heads=...)` configures existing
+captured metadata with the same defaults. Both planning switches off cache
+`None`; the kernel receives no task-order table. Auto policy can also return
+`None` when it has no profitable supported change. Planning and traversal
+preparation should be charged once per reuse window, e.g. cost/42.
 
 The optimized prepared state retains no original full row index. Each logical
 64-row block stores a base for one range, two bases plus a split for two ranges,
@@ -93,5 +108,7 @@ python3 -m http.server 8000 --directory docs
 ```
 
 Then open <http://127.0.0.1:8000/>.
+
+The new [optimization chapter](docs/tutorials/attention-kernel-walkthrough/#optimizations) explains adopted strategies, measured gains and rejected or pending experiments.
 
 Every push to `main` validates the static site and deploys `docs/` to GitHub Pages.

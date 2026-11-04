@@ -63,7 +63,7 @@ def main():
     if a.capture_root:
         plans={'range':f['prepared']}
     else:
-        plans={'range':prepare_attention(f['logical_mask'],f['index'],device=q.device)}
+        plans={'range':prepare_attention(f['logical_mask'],f['index'],device=q.device, reorder=False, reverse=False)}
     from lazy_attention.task_planning import build_task_order, build_adaptive_task_order
     def planner(): return (build_adaptive_task_order if a.adaptive else build_task_order)(plans['range'].backward_plan,f['documents'],q.shape[1],k.shape[2])
     task_order=planner()

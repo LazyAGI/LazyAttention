@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Experimental self-attention operators; GPU dependencies load on first use."""
 from .planning import PreparedAttention, prepare_attention, prepare_rows
+from .execution import prepare_execution
 
 
 def forward(*args, **kwargs):
@@ -13,4 +14,4 @@ def backward(*args, **kwargs):
     return run(*args, **kwargs)
 
 
-__all__ = ['PreparedAttention', 'prepare_attention', 'prepare_rows', 'forward', 'backward']
+__all__ = ['PreparedAttention', 'prepare_attention', 'prepare_rows', 'prepare_execution', 'forward', 'backward']

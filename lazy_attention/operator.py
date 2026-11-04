@@ -137,6 +137,10 @@ def backward(q, k, v, out, dout, lse, prepared, *, scale=None, variant="paired",
             )
     if mapping.device != q.device:
         raise ValueError("row mapping is on the wrong device")
+    if task_plan is None and task_order is None:
+        from .execution import execution_task_plan
+        with _lock:
+            task_plan = execution_task_plan(prepared, k.shape[2])
     split = task_plan is not None and task_plan.split
     if task_plan is not None:
         if task_order is not None: raise ValueError('pass task_plan or task_order')
@@ -144,7 +148,8 @@ def backward(q, k, v, out, dout, lse, prepared, *, scale=None, variant="paired",
         task_order=task_plan.order
     with _lock:
         ctas = torch.cuda.get_device_properties(q.device).multi_processor_count
-        interface = _interface(variant, ctas, task_order is not None, split)
+        interface = _interface(variant, ctas, task_order is not None, split,
+                               prepared.head_major, prepared.q_reverse)
     counter = torch.zeros((1,), device=q.device, dtype=torch.int32)
     if task_order is not None:
         if (task_order.device != q.device or task_order.dtype != torch.int32

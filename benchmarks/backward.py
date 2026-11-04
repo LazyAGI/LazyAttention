@@ -51,7 +51,7 @@ def main():
         digest.update(tensor.view(torch.uint8).numpy().tobytes())
     fixture_sha=digest.hexdigest()
     q,k,v,do=[f[name] for name in ('q','k','v','dout')]
-    plans={name:prepare_attention(f['logical_mask'],f['index'],device=q.device,strategy=name)
+    plans={name:prepare_attention(f['logical_mask'],f['index'],device=q.device,strategy=name, reorder=False, reverse=False)
            for name in ('index','range')}
     out,lse=forward(q,k,v,plans['range'])
     ctas=torch.cuda.get_device_properties(q.device).multi_processor_count

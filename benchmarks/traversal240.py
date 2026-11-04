@@ -34,7 +34,7 @@ def case(a):
     if a.capture_root:
         plans={'range':f['prepared']}
     else:
-        plans={'range':prepare_attention(f['logical_mask'],f['index'],device=q.device)}
+        plans={'range':prepare_attention(f['logical_mask'],f['index'],device=q.device, reorder=False, reverse=False)}
     from lazy_attention.task_planning import plan_tasks, build_task_order, TaskPlan
     from lazy_attention.split_reduction import reduce_partials
     from lazy_attention.q_traversal import prepare_q_traversal
@@ -264,7 +264,7 @@ def main():
     reservation_guard=[torch.empty((1024**3,),dtype=torch.uint8,device='cuda') for _ in range(guard_gib)]
     root=Path(__file__).resolve().parent.parent
     manifest=dict(environment=collect(),telemetry=initial,free_start=free,total=total,
-        reserved_after_preallocation=reserved_before,live_guard_GiB=guard_gib,ssh_alias='M-CCI2',endpoint='root@10.119.31.41:22',
+        reserved_after_preallocation=reserved_before,live_guard_GiB=guard_gib,ssh_alias=os.environ.get('BENCHMARK_SSH_ALIAS'),endpoint=os.environ.get('BENCHMARK_ENDPOINT'),
         factors=dict(head_major=[False,True],reverse=[False,True],interleave=[0,8]),reorder=True,split=False,cases=cases,blocks=a.blocks,cycles=a.cycles,split_size=a.split_size,os_pid=os.getpid(),
         source_sha256={str(f.relative_to(root)):hashlib.sha256(f.read_bytes()).hexdigest() for folder in ('lazy_attention','benchmarks') for f in sorted((root/folder).rglob('*.py'))})
     (a.output_root/'manifest.json').write_text(json.dumps(manifest,indent=2))

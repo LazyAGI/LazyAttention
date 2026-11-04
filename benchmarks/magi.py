@@ -85,8 +85,10 @@ class MagiBackward:
         self.q, self.k, self.v, self.do = [
             fixture[name][0] for name in ("q", "k", "v", "dout")
         ]
-        inverse = torch.argsort(fixture["index"].cpu().long()).numpy()
-        mask = fixture["logical_mask"].cpu().numpy()[inverse][:, inverse]
+        mask = None
+        if "logical_mask" in fixture:
+            inverse = torch.argsort(fixture["index"].cpu().long()).numpy()
+            mask = fixture["logical_mask"].cpu().numpy()[inverse][:, inverse]
         names = ("magi_q_ranges", "magi_k_ranges", "magi_attn_type_map")
         supplied = [name in fixture for name in names]
         if any(supplied) and not all(supplied):
@@ -96,7 +98,10 @@ class MagiBackward:
             if all(supplied)
             else encode_mask(mask)
         )
-        validate_ranges(mask, arrays)
+        if mask is not None:
+            validate_ranges(mask, arrays)
+        else:
+            fixture["validate_magi_ranges"](arrays)
         self.ranges = tuple(
             torch.as_tensor(x, device=self.q.device, dtype=torch.int32) for x in arrays
         )

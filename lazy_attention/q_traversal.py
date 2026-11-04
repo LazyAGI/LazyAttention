@@ -34,21 +34,30 @@ def permute_q_lists(indices, counts, *, reverse=False, interleave=0):
 
 def prepare_q_traversal(prepared, *, reverse=False, interleave=0, indices_cpu=None):
     """Return immutable metadata; all copies belong to preparation cost /42."""
-    if not reverse and not interleave:
+    if prepared.q_reverse == reverse and prepared.q_interleave == interleave:
         return prepared
     import numpy as np
     import torch
     from dataclasses import replace
-    old=prepared.backward_plan
+    old=prepared.base_backward_plan or prepared.backward_plan
+    if not reverse and not interleave:
+        return replace(prepared,backward_plan=old,q_reverse=False,q_interleave=0,
+                       execution_cache={})
     counters=prepared.task_counts_cpu
     if counters is None:
         counters=tuple(x.cpu().numpy() for x in (old.mask_block_cnt,old.full_block_cnt))
+    if indices_cpu is None:
+        indices_cpu=prepared.task_indices_cpu
     if indices_cpu is None:
         indices_cpu=tuple(x.cpu().numpy() for x in (old.mask_block_idx,old.full_block_idx))
     updates={}
     for name,source,count,old_idx,old_count in zip(
         ('mask_block_idx','full_block_idx'),indices_cpu,counters,
         (old.mask_block_idx,old.full_block_idx),(old.mask_block_cnt,old.full_block_cnt)):
+        if old_idx.shape[-1] == 0:
+            updates[name]=old_idx  # Preserve CuTe's unit last stride for empty buckets.
+            continue
         array=permute_q_lists(source,np.asarray(count).reshape(tuple(old_count.shape)),reverse=reverse,interleave=interleave)
         updates[name]=torch.from_numpy(array).to(old_idx.device)
-    return replace(prepared,backward_plan=old._replace(**updates))
+    return replace(prepared,backward_plan=old._replace(**updates),base_backward_plan=old,
+                   q_reverse=reverse,q_interleave=interleave,execution_cache={})
