@@ -10,7 +10,7 @@ pc=torch.tensor(counts,device='cuda',dtype=torch.int32).view(1,1,-1)
 plan=SimpleNamespace(mask_block_cnt=pc,full_block_cnt=torch.zeros_like(pc),block_size=(64,128))
 docs=torch.zeros(128*len(counts),dtype=torch.int32)
 for reorder in (False,True):
-    p=plan_tasks(plan,docs,len(docs),2,reorder=reorder,split=True)
+    p=plan_tasks(plan,docs,len(docs),2,policy="manual",reorder=reorder,split=True)
     coverage=[[] for _ in range(2*len(counts))]
     for slot,(task,start,end,partial_slot) in enumerate(p.order.cpu().tolist()):
         assert end-start<=128
@@ -25,7 +25,7 @@ for mapping in ('continuous','two','index','mixed'):
     p=prepare_attention(f['logical_mask'],f['index'],device=q.device)
     out,lse=forward(q,k,v,p)
     ref=backward(q,k,v,out,do,lse,p)
-    tp=plan_tasks(p.backward_plan,torch.zeros(512,dtype=torch.int32),512,2,reorder=True,split=True,split_size=2)
+    tp=plan_tasks(p.backward_plan,torch.zeros(512,dtype=torch.int32),512,2,policy="manual",reorder=True,split=True,split_size=2)
     for _ in range(2): actual=backward(q,k,v,out,do,lse,p,task_plan=tp)
     assert all(error(a,b)['rel_l2']<=.005 and error(a,b)['max_abs']<=.0625 for a,b in zip(actual,ref))
     stream=torch.cuda.Stream();stream.wait_stream(torch.cuda.current_stream());g=torch.cuda.CUDAGraph()

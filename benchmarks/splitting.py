@@ -70,7 +70,7 @@ def main():
     plan=plans['range'].backward_plan
     def planner(role):
         return plan_tasks(plan,f['documents'],q.shape[1],k.shape[2],
-            reorder=a.mode=='add-split',split=bool(role),split_size=a.split_size)
+            policy='manual',reorder=a.mode=='add-split',split=bool(role),split_size=a.split_size)
     task_plans=[planner(role) for role in (0,1)]
     counts=(plan.mask_block_cnt+plan.full_block_cnt).cpu().flatten().tolist()
     planning_info=[]

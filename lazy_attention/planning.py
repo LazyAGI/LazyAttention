@@ -51,6 +51,7 @@ class PreparedAttention:
     backward_plan: Any
     info: dict
     index: Any = None
+    task_counts_cpu: Any = None
 
 
 def _aux(mask, device):
@@ -72,7 +73,7 @@ def _aux(mask, device):
     return a, b
 
 
-def _sparse_plan(mask, m, n, backward, device):
+def _sparse_plan(mask, m, n, backward, device, counts_out=None):
     import numpy as np
     import torch
     from flash_attn.cute.block_sparsity import BlockSparseTensorsTorch
@@ -102,8 +103,11 @@ def _sparse_plan(mask, m, n, backward, device):
         else:
             # No CPU list packing for an empty bucket. Keep CuTe's unit stride.
             gpu_indices = torch.empty((1, 1, groups, 0), dtype=torch.int32, device=device)
-        return (torch.as_tensor(counts.reshape(1, 1, groups), device=device), gpu_indices)
-    pc, pi = tensors(partial); fc, fi = tensors(full)
+        return (torch.as_tensor(counts.reshape(1, 1, groups), device=device), gpu_indices, counts)
+    pc, pi, pc_cpu = tensors(partial); fc, fi, fc_cpu = tensors(full)
+    if counts_out is not None:
+        pc_cpu.flags.writeable=False;fc_cpu.flags.writeable=False
+        counts_out.extend((pc_cpu,fc_cpu))
     return BlockSparseTensorsTorch(mask_block_cnt=pc, mask_block_idx=pi,
         full_block_cnt=fc, full_block_idx=fi, block_size=(m,n))
 
@@ -135,6 +139,7 @@ def prepare_attention(logical_mask, index=None, *, device='cuda', strategy='rang
     desc = torch.tensor(packed, device=device, dtype=torch.int32) if strategy == 'range' else None
     row_index = index.to(device=device, dtype=torch.int32).contiguous() if strategy == 'index' else None
     info = {**info, "strategy": strategy, "row_mapping_bytes": 4 * (len(packed) if strategy == "range" else size)}
+    counts_cpu=[]
     return PreparedAttention(size, desc, _aux(logical, device), _aux(physical, device),
         _sparse_plan(physical,128,128,False,device),
-        _sparse_plan(logical,64,128,True,device), info, row_index)
+        _sparse_plan(logical,64,128,True,device,counts_cpu), info, row_index, tuple(counts_cpu))

@@ -163,3 +163,96 @@ def plan_tasks(plan, documents, seqlen, kv_heads, *, reorder=False,
     table.__leading_dim__,table.__assumed_align__=1,16
     return TaskPlan(table,torch.from_numpy(indices).to(pc.device),
                     torch.from_numpy(split_tasks).to(pc.device),int(is_split.sum()))
+
+# Preserve explicit factorial controls for experiments and reproducibility.
+_plan_tasks_manual = plan_tasks
+
+
+def plan_tasks(plan, documents, seqlen, kv_heads, *, reorder=False,
+               split=False, split_size=128, policy='auto', sm_count=None,
+               diagnostics=None):
+    """Choose a2x2 strategy once. None removes all task-plan arguments.
+
+    Flags permit optimizations; policy='manual' retains the previous explicit
+    controls. Auto reads only immutable mask/shape metadata, never activations.
+    All analysis, D2H/H2D and table construction are preparation cost /42.
+    """
+    from dataclasses import asdict
+    if policy not in ('auto','manual'):
+        raise ValueError('policy must be auto or manual')
+    if not reorder and not split:
+        if diagnostics is not None: diagnostics.update(strategy='none',reason='switches-off')
+        return None
+    cpu_counts=getattr(plan,'task_counts_cpu',None)
+    if hasattr(plan,'backward_plan'):
+        if seqlen!=plan.seqlen: raise ValueError('prepared sequence length mismatch')
+        plan=plan.backward_plan
+    if policy=='manual':
+        result=_plan_tasks_manual(plan,documents,seqlen,kv_heads,reorder=reorder,
+                                  split=split,split_size=split_size)
+        if diagnostics is not None:
+            diagnostics.update(strategy='none' if result is None else
+                ('both' if reorder else 'split') if result.split else 'reorder',reason='manual')
+        return result
+    import numpy as np
+    from .task_policy import TaskFeatures,select_task_strategy
+    pc,fc,n=_validate_inputs(plan,documents,seqlen,kv_heads,64)
+    # One transfer of the two count arrays, no activation data or dense mask.
+    if cpu_counts is None:
+        counters=torch.stack((pc.flatten(),fc.flatten())).cpu().numpy()
+        counts_source='gpu-copy'
+    else:
+        counters=np.stack(cpu_counts).astype(np.int32,copy=False)
+        if counters.shape!=(2,n) or (counters<0).any():
+            raise ValueError('invalid immutable CPU task counts')
+        counts_source='prepared-cpu'
+    counts=(counters[0]+counters[1]).astype(np.int32)
+    maximum=int(counts.max()); active=counts[counts>0]
+    ids=np.arange(n*kv_heads,dtype=np.int32)
+    base=ids.copy(); group_count=None
+    if reorder:
+        docs=documents.cpu().numpy().reshape(n,128)
+        lo=np.where(docs>=0,docs,np.iinfo(np.int32).max).min(axis=1);hi=docs.max(axis=1)
+        groups=np.where(hi<0,-1,np.where(lo==hi,lo,-np.arange(n)-2))
+        buckets=(counts+63)//64
+        members=[np.flatnonzero(groups==g) for g in np.unique(groups)]
+        members.sort(key=lambda m:(-int(buckets[m].max()),int(m[0])))
+        ids=np.concatenate([(m[:,None]*kv_heads+np.arange(kv_heads)).T.ravel() for m in members]).astype(np.int32)
+        group_count=len(members)
+    sm_count=int(sm_count or torch.cuda.get_device_properties(pc.device).multi_processor_count)
+    total=int(counts.sum())
+    features=TaskFeatures(int(seqlen),int(kv_heads),sm_count,n*kv_heads,
+        len(active)*kv_heads,maximum,float(active.mean()) if len(active) else 0.,
+        float(np.percentile(counts,95)),float(counts.std()/counts.mean()) if total else 0.,
+        float(counters[1].sum()/total) if total else 0.,
+        float((active>split_size).mean()) if len(active) else 0.,total*kv_heads,
+        group_count,not np.array_equal(ids,base))
+    choice=select_task_strategy(features,reorder=reorder,split=split,split_size=split_size)
+    if diagnostics is not None:
+        diagnostics.update(strategy=choice.strategy,reason=choice.reason,
+                           features=asdict(features),split_size=choice.split_size,counts_source=counts_source)
+    if not choice.reorder and not choice.split:
+        return None
+    if not choice.reorder: ids=base
+    if not choice.split:
+        table=torch.from_numpy(ids).to(pc.device)
+        table.__leading_dim__,table.__assumed_align__=0,16
+        return TaskPlan(table)
+    chunk=choice.split_size
+    lengths=np.maximum(1,(counts[ids//kv_heads]+chunk-1)//chunk)
+    starts=np.r_[0,np.cumsum(lengths)]
+    task=np.repeat(ids,lengths)
+    segment=np.arange(len(task))-np.repeat(starts[:-1],lengths)
+    begin=segment*chunk
+    task_lengths=np.empty(n*kv_heads,dtype=np.int32);task_lengths[ids]=lengths
+    is_split=task_lengths[task]>1
+    slots=np.full(len(task),-1,dtype=np.int32);slots[is_split]=np.arange(int(is_split.sum()),dtype=np.int32)
+    records=np.column_stack((task,begin,np.minimum(begin+chunk,counts[task//kv_heads]),slots)).astype(np.int32)
+    split_tasks=np.flatnonzero(task_lengths>1).astype(np.int32)
+    task_rows=np.full(n*kv_heads,-1,dtype=np.int32);task_rows[split_tasks]=np.arange(len(split_tasks))
+    indices=np.full((len(split_tasks),int(lengths.max())),-1,dtype=np.int32)
+    indices[task_rows[task[is_split]],segment[is_split]]=slots[is_split]
+    table=torch.from_numpy(records).to(pc.device)
+    table.__leading_dim__,table.__assumed_align__=1,16
+    return TaskPlan(table,torch.from_numpy(indices).to(pc.device),
+                    torch.from_numpy(split_tasks).to(pc.device),int(is_split.sum()))
