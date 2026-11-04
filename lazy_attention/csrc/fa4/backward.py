@@ -36,7 +36,7 @@ from flash_attn.cute.block_sparse_utils import (
 )
 from lazy_attention.csrc.fa4.scheduler import (
     PersistentScheduler,
-    shifted_q_tile,
+    traversal_q_tile,
     SubsetBarrier,
     subset_barrier,
     subset_arrive,
@@ -51,6 +51,8 @@ class FlashAttentionBackwardSm90:
         self.range_mapping, self.physical_ctas = range_mapping, physical_ctas
         self.persistent_producer_regs = 24
         self.q_shift = 0
+        self.head_major = False
+        self.full_first = False
         self.planned_order = False
         self.split_tasks = False
         self.tile_hdim = self.tile_hdimv = 128
@@ -944,116 +946,228 @@ class FlashAttentionBackwardSm90:
                     cute.arch.sync_warp()
                     cute.arch.fence_view_async_shared()
                 q_start, q_end = tile_scheduler.q_bounds(count)
-                for it in cutlass.range(q_start, q_end, unroll=1):
-                    m_block, is_full = shifted_q_tile(
-                        it, pc, pi, fc, fi, n_block, self.q_shift
-                    )
-                    header = row_descriptor[m_block]
-                    contiguous = header >= 0
-                    base_row = header
-                    split = Int32(0)
-                    payload = Int32(0)
-                    base0, base1 = (Int32(0), Int32(0))
-                    if header < 0:
-                        payload = row_descriptor[cute.size(row_index) // 64 + m_block]
-                    if header < 0 and header > -64:
-                        split = -header
-                        n_q = cute.size(row_index) // 64
-                        base0 = row_descriptor[payload]
-                        base1 = row_descriptor[payload + 1]
-                    bulk_stats = contiguous and base_row % 4 == 0
+                if const_expr(self.head_major):
                     for head_offset in cutlass.range(4, unroll=1):
-                        head_idx = kv_head * 4 + head_offset
-                        pipeline_Q.producer_acquire(producer_state_Q)
-                        pipeline_dO.producer_acquire(producer_state_dO)
-                        if contiguous:
-                            bar_q = pipeline_Q.producer_get_barrier(producer_state_Q)
-                            bar_do = pipeline_dO.producer_get_barrier(producer_state_dO)
-                            if lane == 0:
-                                cute.arch.mbarrier_expect_tx(bar_q, 64 * 128 * 2)
-                                cute.arch.mbarrier_expect_tx(bar_do, 64 * 128 * 2)
+                        for it in cutlass.range(q_start, q_end, unroll=1):
+                            m_block, is_full = traversal_q_tile(
+                                it, pc, pi, fc, fi, n_block, self.q_shift, self.full_first
+                            )
+                            header = row_descriptor[m_block]
+                            contiguous = header >= 0
+                            base_row = header
+                            split = Int32(0)
+                            payload = Int32(0)
+                            base0, base1 = (Int32(0), Int32(0))
+                            if header < 0:
+                                payload = row_descriptor[cute.size(row_index) // 64 + m_block]
+                            if header < 0 and header > -64:
+                                split = -header
+                                n_q = cute.size(row_index) // 64
+                                base0 = row_descriptor[payload]
+                                base1 = row_descriptor[payload + 1]
+                            bulk_stats = contiguous and base_row % 4 == 0
+                            head_idx = kv_head * 4 + head_offset
+                            pipeline_Q.producer_acquire(producer_state_Q)
+                            pipeline_dO.producer_acquire(producer_state_dO)
+                            if contiguous:
+                                bar_q = pipeline_Q.producer_get_barrier(producer_state_Q)
+                                bar_do = pipeline_dO.producer_get_barrier(producer_state_dO)
+                                if lane == 0:
+                                    cute.arch.mbarrier_expect_tx(bar_q, 64 * 128 * 2)
+                                    cute.arch.mbarrier_expect_tx(bar_do, 64 * 128 * 2)
+                                cute.arch.sync_warp()
+                                indexed_tma_load(
+                                    tQ,
+                                    sQ[None, None, producer_state_Q.index],
+                                    tma_atom_Q,
+                                    base_row,
+                                    head_idx,
+                                    bar_q,
+                                )
+                                indexed_tma_load(
+                                    tdO,
+                                    sdO[None, None, producer_state_dO.index],
+                                    tma_atom_dO,
+                                    base_row,
+                                    head_idx,
+                                    bar_do,
+                                )
+                            else:
+                                pair_segments(
+                                    mQ,
+                                    mdO,
+                                    sub_tensors[0],
+                                    sub_tensors[1],
+                                    sub_tensors[2],
+                                    sub_tensors[3],
+                                    sQ[None, None, producer_state_Q.index],
+                                    sdO[None, None, producer_state_dO.index],
+                                    sub_atoms[0],
+                                    sub_atoms[1],
+                                    sub_atoms[2],
+                                    sub_atoms[3],
+                                    row_descriptor,
+                                    payload,
+                                    base0,
+                                    base1,
+                                    split,
+                                    head_idx,
+                                    pipeline_Q.producer_get_barrier(producer_state_Q),
+                                    pipeline_dO.producer_get_barrier(producer_state_dO),
+                                )
+                                cute.arch.cp_async_commit_group()
+                                cute.arch.cp_async_wait_group(0)
+                            if bulk_stats:
+                                indexed_bulk_stats(
+                                    mLSE[None, head_idx, batch_idx],
+                                    sLSE[None, producer_state_Q.index],
+                                    base_row,
+                                    pipeline_Q.producer_get_barrier(producer_state_Q),
+                                )
+                                indexed_bulk_stats(
+                                    mdPsum[None, head_idx, batch_idx],
+                                    sdPsum[None, producer_state_dO.index],
+                                    base_row,
+                                    pipeline_dO.producer_get_barrier(producer_state_dO),
+                                )
+                            else:
+                                for r in cutlass.range(2, unroll=1):
+                                    row = lane + r * 32
+                                    physical = Int32(0)
+                                    if contiguous:
+                                        physical = base_row + row
+                                    elif split > 0:
+                                        physical = affine_row(row, base0, base1, split)
+                                    else:
+                                        physical = row_descriptor[payload + row]
+                                    sLSE[row, producer_state_Q.index] = mLSE[
+                                        physical, head_idx, batch_idx
+                                    ]
+                                    sdPsum[row, producer_state_dO.index] = mdPsum[
+                                        physical, head_idx, batch_idx
+                                    ]
                             cute.arch.sync_warp()
-                            indexed_tma_load(
-                                tQ,
-                                sQ[None, None, producer_state_Q.index],
-                                tma_atom_Q,
-                                base_row,
-                                head_idx,
-                                bar_q,
-                            )
-                            indexed_tma_load(
-                                tdO,
-                                sdO[None, None, producer_state_dO.index],
-                                tma_atom_dO,
-                                base_row,
-                                head_idx,
-                                bar_do,
-                            )
-                        else:
-                            pair_segments(
-                                mQ,
-                                mdO,
-                                sub_tensors[0],
-                                sub_tensors[1],
-                                sub_tensors[2],
-                                sub_tensors[3],
-                                sQ[None, None, producer_state_Q.index],
-                                sdO[None, None, producer_state_dO.index],
-                                sub_atoms[0],
-                                sub_atoms[1],
-                                sub_atoms[2],
-                                sub_atoms[3],
-                                row_descriptor,
-                                payload,
-                                base0,
-                                base1,
-                                split,
-                                head_idx,
-                                pipeline_Q.producer_get_barrier(producer_state_Q),
-                                pipeline_dO.producer_get_barrier(producer_state_dO),
-                            )
-                            cute.arch.cp_async_commit_group()
-                            cute.arch.cp_async_wait_group(0)
-                        if bulk_stats:
-                            indexed_bulk_stats(
-                                mLSE[None, head_idx, batch_idx],
-                                sLSE[None, producer_state_Q.index],
-                                base_row,
-                                pipeline_Q.producer_get_barrier(producer_state_Q),
-                            )
-                            indexed_bulk_stats(
-                                mdPsum[None, head_idx, batch_idx],
-                                sdPsum[None, producer_state_dO.index],
-                                base_row,
-                                pipeline_dO.producer_get_barrier(producer_state_dO),
-                            )
-                        else:
-                            for r in cutlass.range(2, unroll=1):
-                                row = lane + r * 32
-                                physical = Int32(0)
-                                if contiguous:
-                                    physical = base_row + row
-                                elif split > 0:
-                                    physical = affine_row(row, base0, base1, split)
-                                else:
-                                    physical = row_descriptor[payload + row]
-                                sLSE[row, producer_state_Q.index] = mLSE[
-                                    physical, head_idx, batch_idx
-                                ]
-                                sdPsum[row, producer_state_dO.index] = mdPsum[
-                                    physical, head_idx, batch_idx
-                                ]
-                        cute.arch.sync_warp()
-                        cute.arch.fence_view_async_shared()
-                        if lane == 0:
-                            cute.arch.mbarrier_arrive(
-                                pipeline_Q.producer_get_barrier(producer_state_Q)
-                            )
-                            cute.arch.mbarrier_arrive(
-                                pipeline_dO.producer_get_barrier(producer_state_dO)
-                            )
-                        producer_state_Q.advance()
-                        producer_state_dO.advance()
+                            cute.arch.fence_view_async_shared()
+                            if lane == 0:
+                                cute.arch.mbarrier_arrive(
+                                    pipeline_Q.producer_get_barrier(producer_state_Q)
+                                )
+                                cute.arch.mbarrier_arrive(
+                                    pipeline_dO.producer_get_barrier(producer_state_dO)
+                                )
+                            producer_state_Q.advance()
+                            producer_state_dO.advance()
+                else:
+                    for it in cutlass.range(q_start, q_end, unroll=1):
+                        m_block, is_full = traversal_q_tile(
+                            it, pc, pi, fc, fi, n_block, self.q_shift, self.full_first
+                        )
+                        header = row_descriptor[m_block]
+                        contiguous = header >= 0
+                        base_row = header
+                        split = Int32(0)
+                        payload = Int32(0)
+                        base0, base1 = (Int32(0), Int32(0))
+                        if header < 0:
+                            payload = row_descriptor[cute.size(row_index) // 64 + m_block]
+                        if header < 0 and header > -64:
+                            split = -header
+                            n_q = cute.size(row_index) // 64
+                            base0 = row_descriptor[payload]
+                            base1 = row_descriptor[payload + 1]
+                        bulk_stats = contiguous and base_row % 4 == 0
+                        for head_offset in cutlass.range(4, unroll=1):
+                            head_idx = kv_head * 4 + head_offset
+                            pipeline_Q.producer_acquire(producer_state_Q)
+                            pipeline_dO.producer_acquire(producer_state_dO)
+                            if contiguous:
+                                bar_q = pipeline_Q.producer_get_barrier(producer_state_Q)
+                                bar_do = pipeline_dO.producer_get_barrier(producer_state_dO)
+                                if lane == 0:
+                                    cute.arch.mbarrier_expect_tx(bar_q, 64 * 128 * 2)
+                                    cute.arch.mbarrier_expect_tx(bar_do, 64 * 128 * 2)
+                                cute.arch.sync_warp()
+                                indexed_tma_load(
+                                    tQ,
+                                    sQ[None, None, producer_state_Q.index],
+                                    tma_atom_Q,
+                                    base_row,
+                                    head_idx,
+                                    bar_q,
+                                )
+                                indexed_tma_load(
+                                    tdO,
+                                    sdO[None, None, producer_state_dO.index],
+                                    tma_atom_dO,
+                                    base_row,
+                                    head_idx,
+                                    bar_do,
+                                )
+                            else:
+                                pair_segments(
+                                    mQ,
+                                    mdO,
+                                    sub_tensors[0],
+                                    sub_tensors[1],
+                                    sub_tensors[2],
+                                    sub_tensors[3],
+                                    sQ[None, None, producer_state_Q.index],
+                                    sdO[None, None, producer_state_dO.index],
+                                    sub_atoms[0],
+                                    sub_atoms[1],
+                                    sub_atoms[2],
+                                    sub_atoms[3],
+                                    row_descriptor,
+                                    payload,
+                                    base0,
+                                    base1,
+                                    split,
+                                    head_idx,
+                                    pipeline_Q.producer_get_barrier(producer_state_Q),
+                                    pipeline_dO.producer_get_barrier(producer_state_dO),
+                                )
+                                cute.arch.cp_async_commit_group()
+                                cute.arch.cp_async_wait_group(0)
+                            if bulk_stats:
+                                indexed_bulk_stats(
+                                    mLSE[None, head_idx, batch_idx],
+                                    sLSE[None, producer_state_Q.index],
+                                    base_row,
+                                    pipeline_Q.producer_get_barrier(producer_state_Q),
+                                )
+                                indexed_bulk_stats(
+                                    mdPsum[None, head_idx, batch_idx],
+                                    sdPsum[None, producer_state_dO.index],
+                                    base_row,
+                                    pipeline_dO.producer_get_barrier(producer_state_dO),
+                                )
+                            else:
+                                for r in cutlass.range(2, unroll=1):
+                                    row = lane + r * 32
+                                    physical = Int32(0)
+                                    if contiguous:
+                                        physical = base_row + row
+                                    elif split > 0:
+                                        physical = affine_row(row, base0, base1, split)
+                                    else:
+                                        physical = row_descriptor[payload + row]
+                                    sLSE[row, producer_state_Q.index] = mLSE[
+                                        physical, head_idx, batch_idx
+                                    ]
+                                    sdPsum[row, producer_state_dO.index] = mdPsum[
+                                        physical, head_idx, batch_idx
+                                    ]
+                            cute.arch.sync_warp()
+                            cute.arch.fence_view_async_shared()
+                            if lane == 0:
+                                cute.arch.mbarrier_arrive(
+                                    pipeline_Q.producer_get_barrier(producer_state_Q)
+                                )
+                                cute.arch.mbarrier_arrive(
+                                    pipeline_dO.producer_get_barrier(producer_state_dO)
+                                )
+                            producer_state_Q.advance()
+                            producer_state_dO.advance()
                 tile_scheduler.advance_to_next_work()
                 work_tile = tile_scheduler.get_current_work()
         else:
@@ -1074,106 +1188,208 @@ class FlashAttentionBackwardSm90:
                     cute.arch.sync_warp()
                     cute.arch.fence_view_async_shared()
                 q_start, q_end = tile_scheduler.q_bounds(count)
-                for it in cutlass.range(q_start, q_end, unroll=1):
-                    m_block, is_full = shifted_q_tile(
-                        it, pc, pi, fc, fi, n_block, self.q_shift
-                    )
-                    base_row = row_index[m_block * 64]
-                    contiguous = Boolean(True)
-                    for r in cutlass.range_constexpr(2):
-                        rr = lane + r * 32
-                        contiguous = contiguous & (
-                            row_index[m_block * 64 + rr] == base_row + rr
-                        )
-                    contiguous = cute.arch.vote_all_sync(contiguous)
+                if const_expr(self.head_major):
                     for head_offset in cutlass.range(4, unroll=1):
-                        head_idx = kv_head * 4 + head_offset
-                        pipeline_Q.producer_acquire(producer_state_Q)
-                        pipeline_dO.producer_acquire(producer_state_dO)
-                        if contiguous:
-                            bar_q = pipeline_Q.producer_get_barrier(producer_state_Q)
-                            bar_do = pipeline_dO.producer_get_barrier(producer_state_dO)
-                            if lane == 0:
-                                cute.arch.mbarrier_expect_tx(bar_q, 64 * 128 * 2)
-                                cute.arch.mbarrier_expect_tx(bar_do, 64 * 128 * 2)
+                        for it in cutlass.range(q_start, q_end, unroll=1):
+                            m_block, is_full = traversal_q_tile(
+                                it, pc, pi, fc, fi, n_block, self.q_shift, self.full_first
+                            )
+                            base_row = row_index[m_block * 64]
+                            contiguous = Boolean(True)
+                            for r in cutlass.range_constexpr(2):
+                                rr = lane + r * 32
+                                contiguous = contiguous & (
+                                    row_index[m_block * 64 + rr] == base_row + rr
+                                )
+                            contiguous = cute.arch.vote_all_sync(contiguous)
+                            head_idx = kv_head * 4 + head_offset
+                            pipeline_Q.producer_acquire(producer_state_Q)
+                            pipeline_dO.producer_acquire(producer_state_dO)
+                            if contiguous:
+                                bar_q = pipeline_Q.producer_get_barrier(producer_state_Q)
+                                bar_do = pipeline_dO.producer_get_barrier(producer_state_dO)
+                                if lane == 0:
+                                    cute.arch.mbarrier_expect_tx(bar_q, 64 * 128 * 2)
+                                    cute.arch.mbarrier_expect_tx(bar_do, 64 * 128 * 2)
+                                cute.arch.sync_warp()
+                                indexed_tma_load(
+                                    tQ,
+                                    sQ[None, None, producer_state_Q.index],
+                                    tma_atom_Q,
+                                    base_row,
+                                    head_idx,
+                                    bar_q,
+                                )
+                                indexed_tma_load(
+                                    tdO,
+                                    sdO[None, None, producer_state_dO.index],
+                                    tma_atom_dO,
+                                    base_row,
+                                    head_idx,
+                                    bar_do,
+                                )
+                            else:
+                                indexed_segment_load(
+                                    mQ,
+                                    sub_tensors[0],
+                                    sub_tensors[2],
+                                    sQ[None, None, producer_state_Q.index],
+                                    sub_atoms[0],
+                                    sub_atoms[2],
+                                    row_index,
+                                    m_block * 64,
+                                    head_idx,
+                                    pipeline_Q.producer_get_barrier(producer_state_Q),
+                                )
+                                indexed_segment_load(
+                                    mdO,
+                                    sub_tensors[1],
+                                    sub_tensors[3],
+                                    sdO[None, None, producer_state_dO.index],
+                                    sub_atoms[1],
+                                    sub_atoms[3],
+                                    row_index,
+                                    m_block * 64,
+                                    head_idx,
+                                    pipeline_dO.producer_get_barrier(producer_state_dO),
+                                )
+                                cute.arch.cp_async_commit_group()
+                                cute.arch.cp_async_wait_group(0)
+                            if contiguous and base_row % 4 == 0:
+                                indexed_bulk_stats(
+                                    mLSE[None, head_idx, batch_idx],
+                                    sLSE[None, producer_state_Q.index],
+                                    base_row,
+                                    pipeline_Q.producer_get_barrier(producer_state_Q),
+                                )
+                                indexed_bulk_stats(
+                                    mdPsum[None, head_idx, batch_idx],
+                                    sdPsum[None, producer_state_dO.index],
+                                    base_row,
+                                    pipeline_dO.producer_get_barrier(producer_state_dO),
+                                )
+                            else:
+                                for r in cutlass.range(2, unroll=1):
+                                    row = lane + r * 32
+                                    physical = row_index[m_block * 64 + row]
+                                    sLSE[row, producer_state_Q.index] = mLSE[
+                                        physical, head_idx, batch_idx
+                                    ]
+                                    sdPsum[row, producer_state_dO.index] = mdPsum[
+                                        physical, head_idx, batch_idx
+                                    ]
                             cute.arch.sync_warp()
-                            indexed_tma_load(
-                                tQ,
-                                sQ[None, None, producer_state_Q.index],
-                                tma_atom_Q,
-                                base_row,
-                                head_idx,
-                                bar_q,
+                            cute.arch.fence_view_async_shared()
+                            if lane == 0:
+                                cute.arch.mbarrier_arrive(
+                                    pipeline_Q.producer_get_barrier(producer_state_Q)
+                                )
+                                cute.arch.mbarrier_arrive(
+                                    pipeline_dO.producer_get_barrier(producer_state_dO)
+                                )
+                            producer_state_Q.advance()
+                            producer_state_dO.advance()
+                else:
+                    for it in cutlass.range(q_start, q_end, unroll=1):
+                        m_block, is_full = traversal_q_tile(
+                            it, pc, pi, fc, fi, n_block, self.q_shift, self.full_first
+                        )
+                        base_row = row_index[m_block * 64]
+                        contiguous = Boolean(True)
+                        for r in cutlass.range_constexpr(2):
+                            rr = lane + r * 32
+                            contiguous = contiguous & (
+                                row_index[m_block * 64 + rr] == base_row + rr
                             )
-                            indexed_tma_load(
-                                tdO,
-                                sdO[None, None, producer_state_dO.index],
-                                tma_atom_dO,
-                                base_row,
-                                head_idx,
-                                bar_do,
-                            )
-                        else:
-                            indexed_segment_load(
-                                mQ,
-                                sub_tensors[0],
-                                sub_tensors[2],
-                                sQ[None, None, producer_state_Q.index],
-                                sub_atoms[0],
-                                sub_atoms[2],
-                                row_index,
-                                m_block * 64,
-                                head_idx,
-                                pipeline_Q.producer_get_barrier(producer_state_Q),
-                            )
-                            indexed_segment_load(
-                                mdO,
-                                sub_tensors[1],
-                                sub_tensors[3],
-                                sdO[None, None, producer_state_dO.index],
-                                sub_atoms[1],
-                                sub_atoms[3],
-                                row_index,
-                                m_block * 64,
-                                head_idx,
-                                pipeline_dO.producer_get_barrier(producer_state_dO),
-                            )
-                            cute.arch.cp_async_commit_group()
-                            cute.arch.cp_async_wait_group(0)
-                        if contiguous and base_row % 4 == 0:
-                            indexed_bulk_stats(
-                                mLSE[None, head_idx, batch_idx],
-                                sLSE[None, producer_state_Q.index],
-                                base_row,
-                                pipeline_Q.producer_get_barrier(producer_state_Q),
-                            )
-                            indexed_bulk_stats(
-                                mdPsum[None, head_idx, batch_idx],
-                                sdPsum[None, producer_state_dO.index],
-                                base_row,
-                                pipeline_dO.producer_get_barrier(producer_state_dO),
-                            )
-                        else:
-                            for r in cutlass.range(2, unroll=1):
-                                row = lane + r * 32
-                                physical = row_index[m_block * 64 + row]
-                                sLSE[row, producer_state_Q.index] = mLSE[
-                                    physical, head_idx, batch_idx
-                                ]
-                                sdPsum[row, producer_state_dO.index] = mdPsum[
-                                    physical, head_idx, batch_idx
-                                ]
-                        cute.arch.sync_warp()
-                        cute.arch.fence_view_async_shared()
-                        if lane == 0:
-                            cute.arch.mbarrier_arrive(
-                                pipeline_Q.producer_get_barrier(producer_state_Q)
-                            )
-                            cute.arch.mbarrier_arrive(
-                                pipeline_dO.producer_get_barrier(producer_state_dO)
-                            )
-                        producer_state_Q.advance()
-                        producer_state_dO.advance()
+                        contiguous = cute.arch.vote_all_sync(contiguous)
+                        for head_offset in cutlass.range(4, unroll=1):
+                            head_idx = kv_head * 4 + head_offset
+                            pipeline_Q.producer_acquire(producer_state_Q)
+                            pipeline_dO.producer_acquire(producer_state_dO)
+                            if contiguous:
+                                bar_q = pipeline_Q.producer_get_barrier(producer_state_Q)
+                                bar_do = pipeline_dO.producer_get_barrier(producer_state_dO)
+                                if lane == 0:
+                                    cute.arch.mbarrier_expect_tx(bar_q, 64 * 128 * 2)
+                                    cute.arch.mbarrier_expect_tx(bar_do, 64 * 128 * 2)
+                                cute.arch.sync_warp()
+                                indexed_tma_load(
+                                    tQ,
+                                    sQ[None, None, producer_state_Q.index],
+                                    tma_atom_Q,
+                                    base_row,
+                                    head_idx,
+                                    bar_q,
+                                )
+                                indexed_tma_load(
+                                    tdO,
+                                    sdO[None, None, producer_state_dO.index],
+                                    tma_atom_dO,
+                                    base_row,
+                                    head_idx,
+                                    bar_do,
+                                )
+                            else:
+                                indexed_segment_load(
+                                    mQ,
+                                    sub_tensors[0],
+                                    sub_tensors[2],
+                                    sQ[None, None, producer_state_Q.index],
+                                    sub_atoms[0],
+                                    sub_atoms[2],
+                                    row_index,
+                                    m_block * 64,
+                                    head_idx,
+                                    pipeline_Q.producer_get_barrier(producer_state_Q),
+                                )
+                                indexed_segment_load(
+                                    mdO,
+                                    sub_tensors[1],
+                                    sub_tensors[3],
+                                    sdO[None, None, producer_state_dO.index],
+                                    sub_atoms[1],
+                                    sub_atoms[3],
+                                    row_index,
+                                    m_block * 64,
+                                    head_idx,
+                                    pipeline_dO.producer_get_barrier(producer_state_dO),
+                                )
+                                cute.arch.cp_async_commit_group()
+                                cute.arch.cp_async_wait_group(0)
+                            if contiguous and base_row % 4 == 0:
+                                indexed_bulk_stats(
+                                    mLSE[None, head_idx, batch_idx],
+                                    sLSE[None, producer_state_Q.index],
+                                    base_row,
+                                    pipeline_Q.producer_get_barrier(producer_state_Q),
+                                )
+                                indexed_bulk_stats(
+                                    mdPsum[None, head_idx, batch_idx],
+                                    sdPsum[None, producer_state_dO.index],
+                                    base_row,
+                                    pipeline_dO.producer_get_barrier(producer_state_dO),
+                                )
+                            else:
+                                for r in cutlass.range(2, unroll=1):
+                                    row = lane + r * 32
+                                    physical = row_index[m_block * 64 + row]
+                                    sLSE[row, producer_state_Q.index] = mLSE[
+                                        physical, head_idx, batch_idx
+                                    ]
+                                    sdPsum[row, producer_state_dO.index] = mdPsum[
+                                        physical, head_idx, batch_idx
+                                    ]
+                            cute.arch.sync_warp()
+                            cute.arch.fence_view_async_shared()
+                            if lane == 0:
+                                cute.arch.mbarrier_arrive(
+                                    pipeline_Q.producer_get_barrier(producer_state_Q)
+                                )
+                                cute.arch.mbarrier_arrive(
+                                    pipeline_dO.producer_get_barrier(producer_state_dO)
+                                )
+                            producer_state_Q.advance()
+                            producer_state_dO.advance()
                 tile_scheduler.advance_to_next_work()
                 work_tile = tile_scheduler.get_current_work()
 
@@ -1390,47 +1606,90 @@ class FlashAttentionBackwardSm90:
                 dKV_accumulate = False
                 allowed = cute.make_fragment_like(mask_acc, Boolean)
                 q_start, q_end = tile_scheduler.q_bounds(count)
-                for it in cutlass.range(q_start, q_end, unroll=1):
-                    m_block, is_full = shifted_q_tile(
-                        it, pc, pi, fc, fi, n_block, self.q_shift
-                    )
-                    if not is_full:
-                        mask_acc.fill(0.0)
-                        mask.apply_mask(
-                            mask_acc,
-                            batch_idx=batch_idx,
-                            head_idx=head_idx * 4,
-                            m_block=m_block,
-                            n_block=n_block,
-                            thr_mma=thr_mma_SdP,
-                            mask_seqlen=False,
-                            mask_causal=False,
-                            mask_mod=self.mask_mod,
-                            aux_data=aux_data,
-                            fastdiv_mods=fastdiv_mods,
-                        )
-                        for i in cutlass.range_constexpr(cute.size(allowed)):
-                            allowed[i] = mask_acc[i] == 0.0
+                if const_expr(self.head_major):
                     for head_offset in cutlass.range(4, unroll=1):
-                        if is_full:
-                            consumer_state_Q, consumer_state_dO = mma_one_m_block_all(
-                                m_block,
-                                consumer_state_Q,
-                                consumer_state_dO,
-                                mask_fn=None,
-                                dKV_accumulate=dKV_accumulate,
+                        for it in cutlass.range(q_start, q_end, unroll=1):
+                            m_block, is_full = traversal_q_tile(
+                                it, pc, pi, fc, fi, n_block, self.q_shift, self.full_first
                             )
-                        else:
-                            consumer_state_Q, consumer_state_dO = mma_one_m_block_all(
-                                m_block,
-                                consumer_state_Q,
-                                consumer_state_dO,
-                                mask_fn=partial(
-                                    self.apply_cached_mask, allowed=allowed
-                                ),
-                                dKV_accumulate=dKV_accumulate,
+                            if not is_full:
+                                mask_acc.fill(0.0)
+                                mask.apply_mask(
+                                    mask_acc,
+                                    batch_idx=batch_idx,
+                                    head_idx=head_idx * 4,
+                                    m_block=m_block,
+                                    n_block=n_block,
+                                    thr_mma=thr_mma_SdP,
+                                    mask_seqlen=False,
+                                    mask_causal=False,
+                                    mask_mod=self.mask_mod,
+                                    aux_data=aux_data,
+                                    fastdiv_mods=fastdiv_mods,
+                                )
+                                for i in cutlass.range_constexpr(cute.size(allowed)):
+                                    allowed[i] = mask_acc[i] == 0.0
+                            if is_full:
+                                consumer_state_Q, consumer_state_dO = mma_one_m_block_all(
+                                    m_block,
+                                    consumer_state_Q,
+                                    consumer_state_dO,
+                                    mask_fn=None,
+                                    dKV_accumulate=dKV_accumulate,
+                                )
+                            else:
+                                consumer_state_Q, consumer_state_dO = mma_one_m_block_all(
+                                    m_block,
+                                    consumer_state_Q,
+                                    consumer_state_dO,
+                                    mask_fn=partial(
+                                        self.apply_cached_mask, allowed=allowed
+                                    ),
+                                    dKV_accumulate=dKV_accumulate,
+                                )
+                            dKV_accumulate = True
+                else:
+                    for it in cutlass.range(q_start, q_end, unroll=1):
+                        m_block, is_full = traversal_q_tile(
+                            it, pc, pi, fc, fi, n_block, self.q_shift, self.full_first
+                        )
+                        if not is_full:
+                            mask_acc.fill(0.0)
+                            mask.apply_mask(
+                                mask_acc,
+                                batch_idx=batch_idx,
+                                head_idx=head_idx * 4,
+                                m_block=m_block,
+                                n_block=n_block,
+                                thr_mma=thr_mma_SdP,
+                                mask_seqlen=False,
+                                mask_causal=False,
+                                mask_mod=self.mask_mod,
+                                aux_data=aux_data,
+                                fastdiv_mods=fastdiv_mods,
                             )
-                        dKV_accumulate = True
+                            for i in cutlass.range_constexpr(cute.size(allowed)):
+                                allowed[i] = mask_acc[i] == 0.0
+                        for head_offset in cutlass.range(4, unroll=1):
+                            if is_full:
+                                consumer_state_Q, consumer_state_dO = mma_one_m_block_all(
+                                    m_block,
+                                    consumer_state_Q,
+                                    consumer_state_dO,
+                                    mask_fn=None,
+                                    dKV_accumulate=dKV_accumulate,
+                                )
+                            else:
+                                consumer_state_Q, consumer_state_dO = mma_one_m_block_all(
+                                    m_block,
+                                    consumer_state_Q,
+                                    consumer_state_dO,
+                                    mask_fn=partial(
+                                        self.apply_cached_mask, allowed=allowed
+                                    ),
+                                    dKV_accumulate=dKV_accumulate,
+                                )
+                            dKV_accumulate = True
                 acc_dK.store(acc_dK.load() * softmax_scale)
                 if const_expr(self.range_mapping):
                     self.epilogue_dKV(
@@ -1817,33 +2076,62 @@ class FlashAttentionBackwardSm90:
                 blocksparse_tensors, batch_idx, kv_head * 4, n_block
             )
             q_start, q_end = tile_scheduler.q_bounds(count)
-            for it in cutlass.range(q_start, q_end, unroll=1):
-                m_block, is_full = shifted_q_tile(
-                    it, pc, pi, fc, fi, n_block, self.q_shift
-                )
+            if const_expr(self.head_major):
                 for head_offset in cutlass.range(4, unroll=1):
-                    head_idx = kv_head * 4 + head_offset
-                    mdQaccum_cur = mdQaccum[None, head_idx, batch_idx]
-                    gdQaccum = cute.local_tile(
-                        mdQaccum_cur,
-                        (
-                            cute.make_layout(
-                                (
-                                    self.tile_m * self.tile_hdim // self.num_wg_dQ,
-                                    self.num_wg_dQ,
-                                )
+                    for it in cutlass.range(q_start, q_end, unroll=1):
+                        m_block, is_full = traversal_q_tile(
+                            it, pc, pi, fc, fi, n_block, self.q_shift, self.full_first
+                        )
+                        head_idx = kv_head * 4 + head_offset
+                        mdQaccum_cur = mdQaccum[None, head_idx, batch_idx]
+                        gdQaccum = cute.local_tile(
+                            mdQaccum_cur,
+                            (
+                                cute.make_layout(
+                                    (
+                                        self.tile_m * self.tile_hdim // self.num_wg_dQ,
+                                        self.num_wg_dQ,
+                                    )
+                                ),
                             ),
-                        ),
-                        (None,),
+                            (None,),
+                        )
+                        _store_one_dQaccum_sm90(
+                            m_block,
+                            sdQaccum,
+                            gdQaccum,
+                            num_dQ_warp_groups=self.num_wg_dQ,
+                            num_threads_per_warp_group=self.num_threads_per_warp_group,
+                            tma_copy_bytes_dQ=self.tma_copy_bytes["dQ"],
+                        )
+            else:
+                for it in cutlass.range(q_start, q_end, unroll=1):
+                    m_block, is_full = traversal_q_tile(
+                        it, pc, pi, fc, fi, n_block, self.q_shift, self.full_first
                     )
-                    _store_one_dQaccum_sm90(
-                        m_block,
-                        sdQaccum,
-                        gdQaccum,
-                        num_dQ_warp_groups=self.num_wg_dQ,
-                        num_threads_per_warp_group=self.num_threads_per_warp_group,
-                        tma_copy_bytes_dQ=self.tma_copy_bytes["dQ"],
-                    )
+                    for head_offset in cutlass.range(4, unroll=1):
+                        head_idx = kv_head * 4 + head_offset
+                        mdQaccum_cur = mdQaccum[None, head_idx, batch_idx]
+                        gdQaccum = cute.local_tile(
+                            mdQaccum_cur,
+                            (
+                                cute.make_layout(
+                                    (
+                                        self.tile_m * self.tile_hdim // self.num_wg_dQ,
+                                        self.num_wg_dQ,
+                                    )
+                                ),
+                            ),
+                            (None,),
+                        )
+                        _store_one_dQaccum_sm90(
+                            m_block,
+                            sdQaccum,
+                            gdQaccum,
+                            num_dQ_warp_groups=self.num_wg_dQ,
+                            num_threads_per_warp_group=self.num_threads_per_warp_group,
+                            tma_copy_bytes_dQ=self.tma_copy_bytes["dQ"],
+                        )
             tile_scheduler.advance_to_next_work()
             work_tile = tile_scheduler.get_current_work()
         cute.arch.cp_async_bulk_wait_group(0, read=True)

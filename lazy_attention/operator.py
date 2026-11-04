@@ -20,12 +20,12 @@ def _forward_launcher():
     return interface._flash_attn_fwd
 
 
-@lru_cache(maxsize=24)
-def _interface(variant, ctas, planned=False, split=False):
+@lru_cache(maxsize=64)
+def _interface(variant, ctas, planned=False, split=False, head_major=False, full_first=False):
     if variant not in ("index", "paired"):
         raise ValueError(f"unknown variant: {variant}")
     kernel_name, interface_name = "backward", "interface"
-    suffix = f"{variant}_{ctas}_{planned}_{split}"
+    suffix = f"{variant}_{ctas}_{planned}_{split}_{head_major}_{full_first}"
     kernel = private_module(
         f"lazy_attention.csrc.fa4.{kernel_name}", suffix + "_kernel"
     )
@@ -39,6 +39,8 @@ def _interface(variant, ctas, planned=False, split=False):
         obj = kernel.FlashAttentionBackwardSm90(
             dtype, kw["mask_mod"], range_mapping=variant == "paired", physical_ctas=ctas
         )
+        obj.head_major = head_major
+        obj.full_first = full_first
         obj.planned_order = planned
         obj.split_tasks = split
         return obj

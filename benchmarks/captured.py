@@ -39,5 +39,6 @@ def load(root, rank, batch):
         sparse(m['forward_plan'],(128,128)),sparse(ix['logical_backward_plan'],(64,128)),
         encode_rows(f['index'].tolist())[1],task_counts_cpu=tuple(
             ix['logical_backward_plan'][name].numpy().reshape(-1) for name in ('mask_block_cnt','full_block_cnt')))
+    f['q_indices_cpu'] = tuple(ix['logical_backward_plan'][name].numpy() for name in ('mask_block_idx','full_block_idx'))
     f['capture_sha256'] = {name:hashlib.sha256(path.read_bytes()).hexdigest() for name,path in files.items()}
     return f

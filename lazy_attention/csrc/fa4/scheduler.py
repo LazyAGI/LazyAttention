@@ -30,6 +30,18 @@ def shifted_q_tile(it, pc, pi, fc, fi, kv, span: cutlass.Constexpr[int]):
     return get_m_block_from_iter_bwd(mapped, pc, pi, fc, fi)
 
 
+@cute.jit
+def traversal_q_tile(it, pc, pi, fc, fi, kv, span: cutlass.Constexpr[int],
+                     full_first: cutlass.Constexpr[bool] = False):
+    if cutlass.const_expr(full_first):
+        # Reversed lists are prepared once. Swapping class visitation completes
+        # the reversal of[Partial,Full] without an extra per-iteration map load.
+        block, is_partial = shifted_q_tile(it, fc, fi, pc, pi, kv, span)
+        return block, not is_partial
+    else:
+        return shifted_q_tile(it, pc, pi, fc, fi, kv, span)
+
+
 from cutlass.cutlass_dsl import dsl_user_op
 from cutlass._mlir.dialects import llvm
 
