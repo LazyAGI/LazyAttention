@@ -1757,5 +1757,49 @@
     "operator benchmark, not whole training step",
     "no stock-unmodified-FA4 full-corpus comparison in this report",
     "algorithm animations are not measured GPU timelines"
-  ]
+  ],
+  "attribution_estimate": {
+    "method": "Anchor the final measured endpoint, transfer separate historical reorder/reverse ratios, assign residual to shared foundation differences. Not same-run ablations.",
+    "baseline_ms": 15.470014660131392,
+    "endpoint_ms": 13.152644708379103,
+    "reorder_ratio": 0.9066793688278231,
+    "reverse_ratio": 0.9876498526402873,
+    "percentage_points": {
+      "shared_foundation": 5.0564149529455555,
+      "reorder": 8.860195282340385,
+      "reverse_in_q_major": 1.0631425488177977
+    },
+    "shared_foundation_includes": [
+      "logical range access",
+      "paired prefetch and common address decoding",
+      "GQA CTA aggregation",
+      "other base implementation differences",
+      "cross-run attribution error"
+    ],
+    "not_measured_independently": [
+      "each foundation component",
+      "L2 hit rate contribution"
+    ]
+  },
+  "cache_teaching_model": {
+    "policy": "LRU",
+    "keys": "abstract Q/dO tile groups, not hardware cache lines",
+    "cta_kv_columns": [
+      0,
+      2,
+      4
+    ],
+    "mask": "8x8 causal",
+    "request_order": "round-robin among CTAs, no random scheduler",
+    "requests_each_direction": 18,
+    "capacity_4_hits": {
+      "ascending": 4,
+      "descending": 10
+    },
+    "capacity_8_hits": {
+      "ascending": 10,
+      "descending": 10
+    },
+    "hardware_measurement": false
+  }
 }

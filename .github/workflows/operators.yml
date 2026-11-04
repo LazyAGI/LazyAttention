@@ -18,3 +18,4 @@ jobs:
       - run: python -m unittest discover
       - run: python -m benchmarks.backward --help
       - run: python scripts/check_site.py
+      - run: node scripts/check_optimization_models.js
