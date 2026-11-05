@@ -15,6 +15,8 @@ _lock = threading.RLock()
 def _forward_launcher():
     kernel = private_module("flash_attn.cute.flash_fwd_sm90", "forward_kernel")
     kernel.AttentionMask = CompactAttentionMask
+    from .csrc.fa4.forward_scheduler import GroupedReverseTileScheduler
+    kernel.SingleTileScheduler = GroupedReverseTileScheduler
     interface = private_module("flash_attn.cute.interface", "forward_interface")
     interface.FlashAttentionForwardSm90 = kernel.FlashAttentionForwardSm90
     return interface._flash_attn_fwd

@@ -15,11 +15,12 @@ def postprocess(accum, output, mapping, scale, *, range_mapping):
     tensors = (accum, output, mapping)
     dynamic = all(t.is_contiguous() for t in tensors)
     if dynamic:
-        # Baseline index has dynamic S; compact descriptors have static size.
+        # Sequence and row-map payload lengths are runtime metadata. Descriptor
+        # contents determine row addresses; its allocation length is not a kernel
+        # specialization. Masks can change that length on every training step.
         layout = (
             "sequence_dynamic",
             output.shape[2],
-            mapping.numel() if range_mapping else None,
         )
     else:
         layout = tuple((tuple(t.shape), tuple(t.stride())) for t in tensors)
@@ -29,9 +30,9 @@ def postprocess(accum, output, mapping, scale, *, range_mapping):
             obj = FlashAttentionBackwardPostprocess(range_mapping)
             views = [cute.runtime.from_dlpack(t, assumed_align=16) for t in tensors]
             if dynamic:
-                for i, mode in enumerate((2, 1) if range_mapping else (2, 1, 0)):
+                for i, mode in enumerate((2, 1, 0)):
                     views[i] = views[i].mark_compact_shape_dynamic(
-                        mode=mode, stride_order=tensors[i].dim_order(), divisibility=128
+                        mode=mode, stride_order=tensors[i].dim_order(), divisibility=1 if i == 2 and range_mapping else 128
                     )
             _cache[key] = cute.compile(
                 obj,

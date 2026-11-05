@@ -36,4 +36,37 @@ class PlanningTests(unittest.TestCase):
         for index in ([],list(range(63)),[0]*64,list(range(63))+[64],[float(x) for x in range(64)]):
             with self.assertRaises(ValueError): encode_rows(index)
 
+class PrepareRowsTests(unittest.TestCase):
+    def test_vectorized_representation_and_info_match_reference(self):
+        import random
+        import torch
+        from lazy_attention.planning import prepare_rows
+        cases = [list(range(cut, 64)) + list(range(cut)) for cut in range(1, 64)]
+        cases.append(list(range(64)) + list(range(65, 128)) + [64] + list(range(191, 127, -1)))
+        generator = random.Random(42)
+        for size in (128, 4096):
+            values = list(range(size))
+            generator.shuffle(values)
+            cases.append(values)
+        for values in cases:
+            for dtype in (torch.int32, torch.int64):
+                source = torch.empty(len(values) * 2, dtype=dtype)
+                source[::2] = torch.tensor(values, dtype=dtype)
+                expected, info = encode_rows(values)
+                actual, actual_info = prepare_rows(source[::2])
+                self.assertEqual(actual.tolist(), expected)
+                self.assertEqual(actual_info, info)
+                self.assertEqual(decode(actual.tolist(), len(values)), values)
+
+    def test_vectorized_encoder_rejects_invalid_input(self):
+        import torch
+        from lazy_attention.planning import prepare_rows
+        for values in ([], list(range(63)), [0] * 64, list(range(63)) + [64]):
+            with self.assertRaises(ValueError):
+                prepare_rows(torch.tensor(values, dtype=torch.int32))
+        for tensor in (torch.arange(64).float(), torch.arange(64).reshape(2, 32)):
+            with self.assertRaises(ValueError):
+                prepare_rows(tensor)
+
+
 if __name__ == '__main__': unittest.main()
