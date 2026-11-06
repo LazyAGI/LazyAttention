@@ -841,6 +841,10 @@ class FlashAttentionBackwardSm90:
         row_descriptor: Optional[cute.Tensor] = None,
         kv_barrier=None,
     ):
+        # PDL preprocess releases dependents before publishing LSE/dPsum and
+        # clearing dQaccum. Restore its consumer dependency before this loader
+        # publishes any work to the compute/store warps.
+        cute.arch.griddepcontrol_wait()
         producer_state_Q = cutlass.pipeline.make_pipeline_state(
             cutlass.pipeline.PipelineUserType.Producer, self.Q_stage
         )

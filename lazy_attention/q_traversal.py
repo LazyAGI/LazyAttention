@@ -43,6 +43,18 @@ def prepare_q_traversal(prepared, *, reverse=False, interleave=0, indices_cpu=No
     if not reverse and not interleave:
         return replace(prepared,backward_plan=old,q_reverse=False,q_interleave=0,
                        execution_cache={})
+    # GPU-built plans have no CPU copies. Keep their exact list permutation on
+    # device instead of downloading both count/index arrays and uploading them.
+    if indices_cpu is None and prepared.task_indices_cpu is None and old.mask_block_idx.is_cuda:
+        from .csrc.fa4.q_traversal import permute_q_lists_gpu
+        updates = {
+            name: permute_q_lists_gpu(indices, counts, reverse=reverse, interleave=interleave)
+            for name, indices, counts in (
+                ('mask_block_idx', old.mask_block_idx, old.mask_block_cnt),
+                ('full_block_idx', old.full_block_idx, old.full_block_cnt))
+        }
+        return replace(prepared, backward_plan=old._replace(**updates), base_backward_plan=old,
+                       q_reverse=reverse, q_interleave=interleave, execution_cache={})
     counters=prepared.task_counts_cpu
     if counters is None:
         counters=tuple(x.cpu().numpy() for x in (old.mask_block_cnt,old.full_block_cnt))

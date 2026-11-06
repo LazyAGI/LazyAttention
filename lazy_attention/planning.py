@@ -36,8 +36,31 @@ def prepare_rows(index):
     import torch
     if index.ndim != 1 or index.dtype not in (torch.int32, torch.int64):
         raise ValueError('index must be a1D int32/int64 tensor')
-    packed, info = encode_rows(index.detach().cpu().tolist())
-    return torch.tensor(packed, dtype=torch.int32, device=index.device), info
+    import numpy as np
+    values = index.detach().cpu().numpy()
+    size = values.size
+    if not size or size % 64:
+        raise ValueError('row count must be positive and divisible by64')
+    if not np.array_equal(np.sort(values), np.arange(size)):
+        raise ValueError('index must be an integer permutation of[0, row_count)')
+    rows = values.reshape(-1, 64)
+    blocks = rows.shape[0]
+    cuts = rows[:, 1:] != rows[:, :-1] + 1
+    count = cuts.sum(axis=1)
+    split = cuts.argmax(axis=1) + 1
+    lengths = np.where(count == 0, 0, np.where(count == 1, 2, 64))
+    offsets = np.cumsum(lengths) - lengths
+    packed = np.empty(2 * blocks + int(lengths.sum()), dtype=np.int32)
+    packed[:blocks] = np.where(count == 0, rows[:, 0], np.where(count == 1, -split, -64))
+    packed[blocks:2 * blocks] = np.where(count == 0, 0, 2 * blocks + offsets)
+    one = np.flatnonzero(count == 1)
+    packed[2 * blocks + offsets[one]] = rows[one, 0]
+    packed[2 * blocks + offsets[one] + 1] = rows[one, split[one]]
+    many = np.flatnonzero(count > 1)
+    packed[2 * blocks + offsets[many, None] + np.arange(64)] = rows[many]
+    info = dict(mode_counts=[int((count == 0).sum()), int((count == 1).sum()), int((count > 1).sum())],
+                cache_bytes=int(packed.nbytes), index_bytes=4 * size, retained_range_index_entries=0)
+    return torch.from_numpy(packed).to(device=index.device), info
 
 
 @dataclass(frozen=True)
