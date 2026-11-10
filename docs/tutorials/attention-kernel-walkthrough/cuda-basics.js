@@ -93,17 +93,122 @@ function cudaUpdate(id) {
   document.getElementById(`cu-progress-${id}`).textContent=`${step+1} / ${cudaLimits[id]+1}`;
   const next=document.querySelector(`[data-cu-next="${id}"]`); if(next)next.disabled=step===cudaLimits[id];
 }
+function cudaCode(source) {
+  return `<pre class="cu-code"><code>${source.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre>`;
+}
+function cudaIndexNote(text) { return `<div class="cu-index-note"><b>ID → 数据地址</b><p>${text}</p></div>`; }
+function cudaArangeCode() {
+  return cudaCode(`__global__ void arange(int* out, int N) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < N) out[i] = i;  // 不读输入，只写输出
+}
+// Host: arange<<<391, 256, 0, stream>>>(out, 100000);`)+cudaIndexNote('<code>blockIdx.x</code> 选 256 元素的区间；<code>threadIdx.x</code> 选区间内位置。CTA 390 / thread 159 → i=99999，写 out[99999]；thread 160 → i=100000，跳过。arange 没有输入数组读取，写入值直接由 i 计算。');
+}
+function cudaSumCode() {
+  return `<h3>关键 device 代码：相同读取，两种提交方式</h3><p>下面用 <a href="https://nvidia.github.io/cccl/unstable/cub/api/classcub_1_1BlockReduce.html">CUB 的 BlockReduce</a> 表达 CTA 内求和，固定 256 threads / CTA。所有线程都参与归约；只有 thread 0 使用归约结果。<code>ATOMIC</code> 是编译期参数。</p>${cudaCode(`#include <cub/block/block_reduce.cuh>
+template<bool ATOMIC>
+__global__ void sum_tiles(const float* x, int N, float* dst) {
+  int t = threadIdx.x;
+  int base = blockIdx.x * 1024;
+  float local = 0;
+  for (int j = 0; j < 4; ++j) {
+    int i = base + t + j * 256;
+    if (i < N) local += x[i];
+  }
+  using Reduce = cub::BlockReduce<float, 256>;
+  __shared__ Reduce::TempStorage temp;
+  float total = Reduce(temp).Sum(local);
+  if (t == 0) {
+    if constexpr (ATOMIC) atomicAdd(dst, total);
+    else dst[blockIdx.x] = total;
+  }
+}`)}${cudaIndexNote('CTA b 读取 <code>[b×1024, min((b+1)×1024,N))</code>。thread t 读取该块的 t、t+256、t+512、t+768；同一轮 j 中，相邻线程读相邻地址。例：CTA 1 / thread 7 读取 x[1031]、x[1287]、x[1543]、x[1799]。尾块越界值不读，局部贡献保持 0。')}<div class="cu-compare"><article class="cu-route"><h4>A · 原子提交</h4>${cudaCode(`// Host：先初始化，再在同一 stream 执行
+cudaMemsetAsync(out, 0, sizeof(float), stream);
+sum_tiles<true><<<98, 256, 0, stream>>>(x, 100000, out);`)}<p>所有 CTA 的 thread 0 写同一个 <code>out[0]</code>，使用 atomicAdd 避免丢更新。</p></article><article class="cu-route"><h4>B · 写独立 partial，再启动 Kernel 2</h4>${cudaCode(`// Host：partial 分配 98 个 float
+sum_tiles<false><<<98, 256, 0, stream>>>(x, 100000, partial);
+sum_final<<<1, 256, 0, stream>>>(partial, 98, out);`)}<p>CTA b 的 thread 0 独占 <code>partial[b]</code>，不需要原子写。第二个 kernel 的读取对象是 partial。</p></article></div>${cudaCode(`__global__ void sum_final(const float* partial, int P, float* out) {
+  int t = threadIdx.x;
+  float local = 0;
+  for (int p = t; p < P; p += blockDim.x) local += partial[p];
+  using Reduce = cub::BlockReduce<float, 256>;
+  __shared__ Reduce::TempStorage temp;
+  float total = Reduce(temp).Sum(local);
+  if (t == 0) out[0] = total;
+}`)}${cudaIndexNote('Kernel 2 只启动 1 个 CTA。thread t 读 partial[t]，再按 256 步长继续读；本例 P=98，所以 thread 0…97 各读一个值，98…255 不读、贡献 0，但仍参与 CTA 归约。最终仅 thread 0 写 out[0]。该单 CTA 收尾适用于本例的小 partial 数组；更大规模可继续分层。')}`;
+}
+function cudaBnAddressCode() {
+ return `<h3>先固定读地址：以下 BN 示例使用 NCHW</h3><p>逻辑坐标用 (r,c)，其中 r 展平 NHW；指针偏移仍按真实布局计算。使用 64 位元素下标：</p>${cudaCode(`__device__ long long offset_nchw(long long r, int c, int C, int HW) {
+  long long n = r / HW;
+  long long hw = r % HW;
+  return (n * C + c) * HW + hw;
+}
+// NHWC 的对应偏移则是 r * C + c。`)}${cudaIndexNote('先用 r/HW 找 batch 编号 n，再用 r%HW 找该图片中的空间位置。例：NCHW、C=64、HW=65536，r=4103、c=4 → offset=266247，读取 x[266247]；若 r 跨过 HW，公式会自动跳到下一个 batch 的同一通道。')}<p class="cu-caption">下列 BN 代码是突出索引与阶段的 device 伪代码，省略参数列表和归约辅助函数实现。State=(count,mean,M2)；empty_state() 为零计数；update(s,x) 纳入一个样本；warp_merge_all(s) 合并 32 lanes 并把最终状态广播到每个 lane；block_merge(s) 合并 CTA 的全部状态，仅 thread 0 使用结果。合并数学见本节末尾，所有参与线程均需执行对应归约。</p>`;
+}
+function cudaBnSingleCode() {
+ return `<h4>关键代码：每 warp 一个通道，CTA 内完成输出</h4>${cudaCode(`// 128 threads / CTA；本例 M=32，每 CTA 4 通道
+int warp = threadIdx.x / 32;
+int lane = threadIdx.x % 32;
+int c = blockIdx.x * 4 + warp;
+int r = lane;
+State s = empty_state();
+float value = 0;
+if (c < C && r < M) {
+  value = x[offset_nchw(r, c, C, HW)];
+  s = update(s, value);
+}
+State all = warp_merge_all(s);  // 32 lanes 都调用
+if (c < C && r < M) {
+  float inv = rsqrtf(all.M2 / all.count + eps);
+  y[offset_nchw(r, c, C, HW)] =
+      gamma[c] * (value - all.mean) * inv + beta[c];
+}`)}${cudaIndexNote('blockIdx.x 选一组 4 通道，warp ID 选组内通道，lane ID 选该通道的 NHW 位置。例：CTA 2 / thread 39 → warp=1、lane=7 → c=9、r=7；本例 HW=32，因此读 x[295]，归约后写 y[295]，使用 gamma[9] 和 beta[9]。输入 value 保留在线程寄存器中。')}`;
+}
+function cudaBnSplitCode(caseThree=false) {
+ const cb=caseThree?1:4, tile=caseThree?65536:4096;
+ return `<h4>关键代码：${caseThree?'同一读取方式，改成每 CTA 一个通道':'CTA 的 x 轴选通道组，y 轴选 NHW 分段'}</h4>${cudaCode(`// ${caseThree?'情况 3':'情况 2'}：CB=${cb}，TILE=${tile}；threads=32*CB
+// grid=(ceil(C/CB), ceil(M/TILE))，S=ceil(M/TILE)
+int warp = threadIdx.x / 32, lane = threadIdx.x % 32;
+int c = blockIdx.x * CB + warp;
+int segment = blockIdx.y;
+long long begin = (long long)segment * TILE;
+long long end = min(begin + TILE, M);
+State s = empty_state();
+for (long long r = begin + lane; r < end; r += 32) {
+  if (c < C) s = update(s, x[offset_nchw(r, c, C, HW)]);
+}
+State part = warp_merge_all(s);  // 同一通道的 32 lanes 合并
+if (lane == 0 && c < C) partial[c * S + segment] = part;`)}${cudaIndexNote(caseThree?'CB=1，所以每 CTA 32 threads，warp=0、c=blockIdx.x。例：CTA (c=2, segment=5) / thread 7 → r 从 327687 开始，每次 +32，直到 r&lt;393216；本例 HW=16777216，首次读取 x[33882119]。lane 0 把该段结果写 partial[2×256+5]=partial[517]。':'CB=4。例：CTA (blockIdx.x=1, blockIdx.y=1) / thread 7 → c=4、lane=7、segment=1；r=4103、4135、4167…且 r&lt;8192。首次读 x[266247]；同 warp 的 lane 0 将合并结果写 partial[4×16+1]=partial[65]。不是把 HW 再拆成二维坐标。')}${caseThree?'<p class="cu-caption">每 CTA 仅用一个 warp 是突出索引的教学映射；每线程会循环读取多个位置，真实优化可让多个 warp 协同一个通道并测量收益。</p>':''}`;
+}
+function cudaBnFinishCode() {
+ return `<h3>情况 2 / 3 共用：合并 partial，再逐元素输出</h3><h4>Kernel 2 · 每个 CTA 合并一个通道</h4>${cudaCode(`// grid=C，128 threads / CTA
+int c = blockIdx.x, t = threadIdx.x;
+State s = empty_state();
+for (int segment = t; segment < S; segment += blockDim.x)
+  s = merge(s, partial[c * S + segment]);
+State all = block_merge(s);  // 全 CTA 参与
+if (t == 0) {
+  mean[c] = all.mean;
+  invstd[c] = rsqrtf(all.M2 / all.count + eps);
+}`)}${cudaIndexNote('blockIdx.x 就是通道 c；thread t 读该通道第 t、t+128…段的状态。C=64／128 时 S=16：只有前 16 个线程各读一份，其余以空状态参与归约。C=3 时 S=256：每线程读两份；例如 c=2、thread 7 读 partial[519] 和 partial[647]。thread 0 写 mean[c]、invstd[c]。')}<h4>Kernel 3 · 按 NCHW 物理连续下标分块输出</h4>${cudaCode(`// 256 threads / CTA，每 CTA 至多输出 1024 个元素
+for (int j = 0; j < 4; ++j) {
+  long long q = (long long)blockIdx.x * 1024 + threadIdx.x + j * 256;
+  if (q < (long long)N * C * HW) {
+    int c = (q / HW) % C;
+    y[q] = gamma[c] * (x[q] - mean[c]) * invstd[c] + beta[c];
+  }
+}`)}${cudaIndexNote('q 是物理元素下标，不是逻辑 NHW 坐标 r；blockIdx.x 选连续 1024 元素，threadIdx.x 与 j 选块内位置。c=(q/HW)%C 决定读取哪份 mean／invstd／gamma／beta。例：C=64、HW=65536，CTA 256 / thread 7 / j=0 → q=262151、c=4，读 x[262151]、mean[4] 等，写 y[262151]。NCHW 下相邻线程读写相邻物理元素。')}<p>两个统计 kernel 和输出 kernel 在同一 stream 顺序启动。状态数组 <code>partial</code> 有 C×S 项；mean、invstd 各有 C 项。输出不读取未完成的局部统计。</p>`;
+}
+
 function renderCudaBasics() {
   $('intro').innerHTML=`<div class="cu-lesson"><div class="eyebrow">CUDA BASICS · 从任务拆分到跨 CTA 归约</div><h2>先回答两个问题：谁负责输出，谁来汇总？</h2><p class="cu-lead">沿着 <b>执行模型 → arange → sum → BatchNorm</b> 顺序看下去。独立输出可以直接分工；共享一个结果，就要设计归约与同步。最后再进入 Attention。</p><p class="cu-caption">本页动画展示数据归属、阶段和依赖；不是 GPU 周期模拟，也没有未经测量的速度排名。</p>
   <section class="cu-section"><div class="cu-kicker">01 / 执行模型</div><h2>CTA 是协作团队，SM 是执行硬件</h2><p>CPU 启动一个 <b>kernel</b>，创建一个 <b>grid</b>；grid 由多个 <b>CTA（Cooperative Thread Array，也称 thread block）</b>组成，每个 CTA 包含多个 thread。线程按 32 个一组构成 <b>warp</b>，以 <b>SIMT（Single Instruction, Multiple Threads）</b>方式执行：同一条指令，各线程处理自己的数据。</p><div class="cu-compare"><article class="cu-route"><h3>任务怎么组织</h3><div class="cu-hierarchy">Kernel launch → Grid → CTA → Warp → Thread</div><p>CTA 内可以通过 shared memory 交换数据，用 <code>__syncthreads()</code> 做 CTA 级屏障；参与线程必须正确到达屏障。warp 内协作也需要遵守参与 mask 与同步规则。</p></article><article class="cu-route"><h3>任务在哪执行</h3><div class="cu-hierarchy">GPU → 多个 SM → 驻留 CTA / warps</div><p>SM（Streaming Multiprocessor，流式多处理器）是执行硬件。一个 CTA 的线程在同一个 SM 上执行；一个 SM 可以容纳多个 CTA。CTA 数量可以远大于 SM 数量，按资源可用性分批执行，不能依赖 CTA 的先后顺序。</p></article></div>${cudaFrame('hardware')}<div class="cu-storage">${cudaChip('寄存器：线程局部状态','purple')}${cudaChip('Shared memory：CTA 内交换','green')}${cudaChip('Global memory：输入 / 输出 / 跨 CTA 状态','blue')}</div><div class="note"><b>SIMT 不等于所有线程永远执行同一条路径。</b>同一 warp 遇到分支时，会对相应 lane 使能/屏蔽；路径分歧可能降低效率。<code>__syncthreads()</code> 也不能同步整个 grid。本页先讲普通独立 CTA；cooperative launch 等特殊机制不在此展开。</div></section>
-  <section class="cu-section"><div class="cu-kicker">02 / 独立输出</div><h2>arange(100000)：给每个输出找一个主人</h2><p>生成 <code>[0, 1, …, 99999]</code>。每个输出只依赖下标，线程之间没有数据依赖。选 256 threads / CTA，启动 ⌈100000 / 256⌉ = <b>391 CTAs</b>。</p><pre class="cu-code"><code>i = blockIdx.x * blockDim.x + threadIdx.x;
-if (i &lt; 100000) out[i] = i;</code></pre>${cudaFrame('arange')}<div class="note">每个线程写不同位置，所以没有写入竞争，也不需要归约。更大的数据也可以让线程循环处理多个位置；线程数无需等于元素数。</div></section>
-  <section class="cu-section"><div class="cu-kicker">03 / 一个结果，多份贡献</div><h2>sum：先局部归约，再跨 CTA 汇总</h2><p>对 100000 个 1 求和。每个 CTA 负责至多 1024 个输入，用 256 个线程处理：线程 t 读取本块的 t、t+256、t+512、t+768，越界贡献取 0。总计 <b>98 CTAs：97 个完整块 + 1 个 672 元素尾块</b>。</p><div class="cu-race"><b>为什么不能直接 out += value？</b><p>假设 out=0，两个 CTA 的贡献都是 1024。两边同时读到 0，各写回 1024，结果可能是 1024，正确结果应是 2048。普通读—改—写会丢贡献。</p></div>${cudaFrame('sum')}<div class="cu-compare"><div><h3>原子加保护更新，不提供全局屏障</h3><p><code>atomicAdd(out, block_sum)</code> 保证这次同址累加不会丢失。先在 CTA 内归约，把原子请求从 100000 次降为 98 次。一次提交结束不代表其他 CTA 已完成；不能立即据此消费最终结果。</p><p>浮点加法顺序变化可能改变末位结果；本例使用全 1 输入便于核算，不代表任意输入都能精确相加。</p></div><div><h3>二次归约以中间结果换取较少竞争</h3><p>Kernel 1 写 partial，Kernel 2 汇总；若 partial 仍然很多，可以继续多级归约。额外 launch 和临时数组也有成本，应实测选择，不能只数 kernel 数量。</p><p>这里的 reduce-add 指加法归约；<code>atomicAdd</code> 是原子更新接口，不等同于 warp 归约指令。具体指令还受架构和数据类型限制。</p></div></div></section>
+  <section class="cu-section"><div class="cu-kicker">02 / 独立输出</div><h2>arange(100000)：给每个输出找一个主人</h2><p>生成 <code>[0, 1, …, 99999]</code>。每个输出只依赖下标，线程之间没有数据依赖。选 256 threads / CTA，启动 ⌈100000 / 256⌉ = <b>391 CTAs</b>。</p>${cudaArangeCode()}${cudaFrame('arange')}<div class="note">每个线程写不同位置，所以没有写入竞争，也不需要归约。更大的数据也可以让线程循环处理多个位置；线程数无需等于元素数。</div></section>
+  <section class="cu-section"><div class="cu-kicker">03 / 一个结果，多份贡献</div><h2>sum：先局部归约，再跨 CTA 汇总</h2><p>对 100000 个 1 求和。每个 CTA 负责至多 1024 个输入，用 256 个线程处理：线程 t 读取本块的 t、t+256、t+512、t+768，越界贡献取 0。总计 <b>98 CTAs：97 个完整块 + 1 个 672 元素尾块</b>。</p><div class="cu-race"><b>为什么不能直接 out += value？</b><p>假设 out=0，两个 CTA 的贡献都是 1024。两边同时读到 0，各写回 1024，结果可能是 1024，正确结果应是 2048。普通读—改—写会丢贡献。</p></div>${cudaFrame('sum')}${cudaSumCode()}<div class="cu-compare"><div><h3>原子加保护更新，不提供全局屏障</h3><p><code>atomicAdd(out, block_sum)</code> 保证这次同址累加不会丢失。先在 CTA 内归约，把原子请求从 100000 次降为 98 次。一次提交结束不代表其他 CTA 已完成；不能立即据此消费最终结果。</p><p>浮点加法顺序变化可能改变末位结果；本例使用全 1 输入便于核算，不代表任意输入都能精确相加。</p></div><div><h3>二次归约以中间结果换取较少竞争</h3><p>Kernel 1 写 partial，Kernel 2 汇总；若 partial 仍然很多，可以继续多级归约。额外 launch 和临时数组也有成本，应实测选择，不能只数 kernel 数量。</p><p>这里的 reduce-add 指加法归约；<code>atomicAdd</code> 是原子更新接口，不等同于 warp 归约指令。具体指令还受架构和数据类型限制。</p></div></div></section>
   <section class="cu-section"><div class="cu-kicker">04 / BatchNorm：形状改变拆分</div><h2>每个通道一份统计，每个元素一个输出</h2><p>只讨论<b>训练前向 BN</b>：每个通道沿 N、H、W 统计均值和方差，再归一化。推理通常直接使用已有统计。令 <b>M = NHW</b>，逻辑上把数据看作 M × C：</p><div class="cu-equations">μc = Σr x[r,c] / M<br>σ²c = Σr (x[r,c] − μc)² / M<br>y[r,c] = γc × (x[r,c] − μc) / √(σ²c + ε) + βc</div><div class="note"><b>HW 可以直接逻辑展平，不必按二维图像处理。</b><code>r = ((n × H) + h) × W + w</code>。切分的是 r 的区间；它可以跨图像的行边界甚至 batch 边界。通道独立，归约方向是 NHW。</div><div class="cu-compare"><article class="cu-route"><h3>NCHW：优先利用连续的空间位置</h3><p>地址 = (n × C + c) × HW + h × W + w。同一通道的一张图内部 HW 连续，跨 batch 时有步长；逻辑 NHW 展平并不保证物理上始终连续。</p></article><article class="cu-route"><h3>NHWC：优先利用连续的通道</h3><p>地址 = r × C + c。同一位置的 C 连续。一个 CTA 同时处理多个通道，往往更容易让相邻线程访问相邻地址；具体线程映射需结合布局设计。</p></article></div>
-  <article class="cu-bn-case"><h3>情况 1 · C 很大，NHW 很小：只沿 C 拆</h3><p>C=4096，M=32。每 CTA 负责 4 个完整通道，通道轴本身已经提供 1024 张任务。<b>不用跨 CTA 归约，但仍要在 CTA 内完成统计。</b></p>${cudaFrame('bn1')}</article>
-  <article class="cu-bn-case"><h3>情况 2 · C=64 / 128：同时拆 C 和 NHW</h3><p>固定 H=W=256，M=65536。<b>这次明确沿两个轴拆：</b>通道分组，每组 4 通道；NHW 每 4096 个位置一段，每通道 16 段。只沿 C 拆会得到较少且较重的任务；二维任务网格增加并行工作，同时引入跨 CTA 统计合并。</p><div class="cu-controls" aria-label="通道数示例"><span>同样的拆分，比较通道数：</span><button data-cu-channels="64" aria-pressed="true">C = 64</button><button data-cu-channels="128" aria-pressed="false">C = 128</button></div>${cudaFrame('bn2')}</article>
-  <article class="cu-bn-case"><h3>情况 3 · C=3，HW 巨大：主要沿 NHW 拆</h3><p>H=W=4096。只沿 C 分配就只有 3 个 CTA，难以充分利用 GPU。每通道 NHW 分成 256 段，产生 <b>768 张统计任务</b>；汇总后，输出阶段继续沿元素切成大量任务。</p>${cudaFrame('bn3')}</article>
-  <h3>BN 的局部状态怎么合并？</h3><p>采用可合并的 Welford 状态：每段保存 <code>(count, mean, M2)</code>，M2 是相对该段均值的平方偏差和。两段均值不同时，不能直接把局部方差相加。下面给出合并关系，零计数状态需单独跳过：</p><pre class="cu-code"><code>δ = meanB − meanA;  count = countA + countB
+  ${cudaBnAddressCode()}<article class="cu-bn-case"><h3>情况 1 · C 很大，NHW 很小：只沿 C 拆</h3><p>C=4096，M=32。每 CTA 负责 4 个完整通道，通道轴本身已经提供 1024 张任务。<b>不用跨 CTA 归约，但仍要在 CTA 内完成统计。</b></p>${cudaFrame('bn1')}${cudaBnSingleCode()}</article>
+  <article class="cu-bn-case"><h3>情况 2 · C=64 / 128：同时拆 C 和 NHW</h3><p>固定 H=W=256，M=65536。<b>这次明确沿两个轴拆：</b>通道分组，每组 4 通道；NHW 每 4096 个位置一段，每通道 16 段。只沿 C 拆会得到较少且较重的任务；二维任务网格增加并行工作，同时引入跨 CTA 统计合并。</p><div class="cu-controls" aria-label="通道数示例"><span>同样的拆分，比较通道数：</span><button data-cu-channels="64" aria-pressed="true">C = 64</button><button data-cu-channels="128" aria-pressed="false">C = 128</button></div>${cudaFrame('bn2')}${cudaBnSplitCode()}</article>
+  <article class="cu-bn-case"><h3>情况 3 · C=3，HW 巨大：主要沿 NHW 拆</h3><p>H=W=4096。只沿 C 分配就只有 3 个 CTA，难以充分利用 GPU。每通道 NHW 分成 256 段，产生 <b>768 张统计任务</b>；汇总后，输出阶段继续沿元素切成大量任务。</p>${cudaFrame('bn3')}${cudaBnSplitCode(true)}</article>${cudaBnFinishCode()}
+  <h3>BN 的局部状态怎么合并？</h3><p>采用可合并的 Welford 状态：每段保存 <code>(count, mean, M2)</code>，M2 是相对该段均值的平方偏差和。两段均值不同时，不能直接把局部方差相加。下面给出合并关系，零计数状态需单独跳过。这是前面 <code>merge</code> / 归约辅助函数使用的寄存器内数学；A、B 两份状态来自上述 ID 映射读取的 partial，本段不再用线程 ID 读取数组：</p><pre class="cu-code"><code>δ = meanB − meanA;  count = countA + countB
 mean = meanA + δ × countB / count
 M2 = M2A + M2B + δ² × countA × countB / count
 variance = M2 / count</code></pre><p>本页归一化使用总体方差；框架的 running variance 更新约定需另行对齐。三个字段是关联状态，不能分别 atomicAdd 就当作完成 Welford 合并。本页用二次归约显式表达依赖。</p><div class="note"><b>优化要同时看并行度与访存。</b>能留住输入时，可减少重读；切成更多 CTA 能增加并行任务，也要多写局部状态、合并和启动 kernel。这里是可解释的拆分起点，不是所有 GPU / 布局下的最优配置。</div></section>
