@@ -3,3 +3,5 @@
 .cu-flow-svg{display:block;width:100%;height:auto;margin:12px 0}.cu-bn-flow{display:grid;gap:7px;text-align:center;margin:16px 0}.cu-bn-flow>div{border:1px solid var(--line);background:#eef1f5;border-radius:7px;padding:9px}.cu-bn-flow b,.cu-bn-flow small{display:block;font-size:13px}.cu-bn-flow>span{font-size:12px;color:var(--muted)}.cu-bn-flow>div.cu-ready{background:#dcebe1;border-color:#8cab98}
 
 .cu-index-note{background:#eaf3ff;border-left:3px solid #1765c1;padding:13px 17px;margin:14px 0 22px}.cu-index-note p{margin:7px 0 0;font-size:14px;overflow-wrap:anywhere}.cu-route .cu-code{font-size:12px}.cu-lesson h4{margin-bottom:10px}
+
+.cu-shuffle-lanes{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:5px;margin:18px 0}.cu-shuffle-lanes>div{background:#eef1f5;border:1px solid var(--line);border-radius:5px;text-align:center;padding:8px 3px}.cu-shuffle-lanes small,.cu-shuffle-lanes b{display:block}.cu-shuffle-lanes small{font-size:11px}.cu-shuffle-lanes .cu-ready{background:#dcebe1;border-color:#8cab98}@media(max-width:650px){.cu-shuffle-lanes{grid-template-columns:repeat(4,minmax(0,1fr))}}
