@@ -20,7 +20,7 @@ function wcMaskSvg(ranges,runs,label){
  return `<div><h4>${label}</h4><div class="board"><svg viewBox="0 0 600 610" role="img" aria-label="${label} mask"><text x="45" y="25" font-size="15">K →　Q ↓</text><rect x="45" y="45" width="510" height="510" fill="#eef1f5"/>${polygons}${strip}<text x="45" y="604" font-size="13">紫色 GEN · 绿色 UND</text></svg></div></div>`;
 }
 function wcMaskComparison(){
- return `<div class="wc-mask-comparison"><h3>UND / GEN 重排序前后</h3><p>两图使用同一套 attention 规则和相同 token。重排序只改变 token 坐标：左图保留原始交错顺序，右图把 GEN 稳定移到前部；可见 token pair 总数均为 321,784,803。</p><div class="cols">${wcMaskSvg(worstCaseData.original_ranges,worstCaseData.original_gen_runs,'重排序前 · 原始 UND / GEN 交错')}${wcMaskSvg(worstCaseData.ranges,worstCaseData.reordered_gen_runs,'重排序后 · GEN → UND')}</div></div>`;
+ return `<div class="wc-mask-comparison"><h3>UND / GEN 重排序前后</h3><p>两图使用同一套 attention 规则和相同 token。重排序只改变 token 坐标：左图按 metadata 构造兼容的交错顺序（位置相等时无法唯一还原），右图把 GEN 稳定移到前部；可见 token pair 总数均为 321,784,803。</p><div class="cols">${wcMaskSvg(worstCaseData.original_ranges,worstCaseData.original_gen_runs,'重排序前 · 兼容交错顺序重建')}${wcMaskSvg(worstCaseData.ranges,worstCaseData.reordered_gen_runs,'重排序后 · GEN → UND')}</div></div>`;
 }
 function wcPaint(){
  const host=document.getElementById('wc-example');if(!host)return;

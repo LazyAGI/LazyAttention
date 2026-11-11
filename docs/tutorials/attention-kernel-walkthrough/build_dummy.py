@@ -1,5 +1,8 @@
-import ast,json,pathlib,numpy as np,hashlib
-ROOT=pathlib.Path(__file__).resolve().parents[2];OUT=pathlib.Path(__file__).parent
+import json,pathlib,numpy as np,hashlib,sys
+REPO=pathlib.Path(__file__).resolve().parents[3]
+sys.path.insert(0,str(REPO))
+from benchmarks.mot_ranges import ranges_from_metadata
+OUT=pathlib.Path(__file__).parent
 names=['mot_document_ids','mot_doc_mod_ids','mot_image_gen_indicators','mot_is_image_token','mot_token_pos','mot_dup_boundary']
 blocks=[]
 def add(doc,label,n,image=False,gen=False,mod=0,pos=0,linear=True,dup=False):
@@ -7,7 +10,7 @@ def add(doc,label,n,image=False,gen=False,mod=0,pos=0,linear=True,dup=False):
 add(0,'文字问题',1536);add(0,'纯文字回答',2560,pos=1536)
 add(1,'多图提问',512);add(1,'输入图 A',768,True,mod=1,pos=512,linear=False);add(1,'图间文字',512,pos=513);add(1,'输入图 B',768,True,mod=2,pos=1025,linear=False);add(1,'文字回答',1536,pos=1026)
 add(2,'生图提示',512);add(2,'生成图',2048,True,True,1,512,False);add(2,'文字尾部',1536,pos=513)
-add(3,'编辑指令',256);add(3,'同图非 gen',1024,True,False,1,256,True);add(3,'同图 gen',1024,True,True,1,256,True);add(3,'编辑后文字',1792,pos=1280)
+add(3,'抽象 gate 测试',256);add(3,'人工递增非 GEN',1024,True,False,1,256,True);add(3,'人工递增 GEN',1024,True,True,1,256,True);add(3,'编辑后文字',1792,pos=1280)
 add(4,'多模态指令',512);add(4,'参考图',768,True,False,1,512,False);add(4,'中间文字',256,pos=513);add(4,'输出新图',1536,True,True,2,769,False);add(4,'结束文字',1024,pos=770)
 add(5,'定位置提示',512);add(5,'同位置非 gen',1024,True,False,1,512,False);add(5,'同位置 gen',1024,True,True,1,512,False);add(5,'文字收尾',1536,pos=513)
 add(6,'双图生成提示',512);add(6,'生成图 A',1024,True,True,1,512,False);add(6,'生成图 B',1024,True,True,2,513,False);add(6,'双图后文字',1536,pos=514)
@@ -24,10 +27,19 @@ old=[np.asarray(a,dtype=bool if i in [2,3,5] else np.int64) for i,a in enumerate
 perm=np.r_[np.flatnonzero(old[2]),np.flatnonzero(~old[2])];inv=np.argsort(perm);d,m,g,im,pos,dup=[a[perm] for a in old];not_image_gen_indicators=~g
 order=sorted(range(len(blocks)),key=lambda i:not blocks[i]['gen']);cursor=0
 for i in order:b=blocks[i];b['start']=cursor;b['end']=cursor+b['length'];cursor=b['end']
-src=(ROOT/'mcore-bridge/src/mcore_bridge/model/modules/mot_magi_attention.py').read_text();fn=next(ast.get_source_segment(src,x) for x in ast.parse(src).body if isinstance(x,ast.FunctionDef) and x.name=='ranges_from_metadata');env={'np':np,'METADATA_NAMES':names};exec(fn,env);qr,kr,types=env['ranges_from_metadata'](dict(zip(names,[d,m,g,im,pos,dup])),32768);ranges=np.column_stack([qr,kr,types]).tolist()
-# Execute the actual mask_mod body with captured arrays, independently of ranges.
-source=(ROOT/'mcore-bridge/src/mcore_bridge/model/modules/mot.py').read_text();parent=next(x for x in ast.parse(source).body if isinstance(x,ast.FunctionDef) and x.name=='create_flex_mask_padding_image_gen');node=next(x for x in parent.body if isinstance(x,ast.FunctionDef) and x.name=='mask_mod');masksrc=ast.unparse(node)
-env2=dict(zip(['document_ids','doc_mod_ids','image_gen_indicators','is_image_token','token_pos','dup_boundary'],[d,m,g,im,pos,dup]));env2['not_image_gen_indicators']=~g;exec(masksrc,env2);maskfn=env2['mask_mod']
+qr,kr,types=ranges_from_metadata(dict(zip(names,[d,m,g,im,pos,dup])),32768);ranges=np.column_stack([qr,kr,types]).tolist()
+# Independent transcription of the public U1 predicate; no training checkout needed.
+masksrc = """def mask_mod(_b, _h, q_idx, kv_idx):
+    same_doc = document_ids[q_idx] == document_ids[kv_idx]
+    same_mod_doc = same_doc & (doc_mod_ids[q_idx] == doc_mod_ids[kv_idx])
+    causal_doc = same_doc & (token_pos[q_idx] >= token_pos[kv_idx])
+    same_img = is_image_token[q_idx] & is_image_token[kv_idx] & same_mod_doc
+    allowed = causal_doc | same_img
+    gen_gate = ~image_gen_indicators[kv_idx] | (image_gen_indicators[q_idx] & same_mod_doc)
+    gen_same_pos_gate = ~image_gen_indicators[q_idx] | image_gen_indicators[kv_idx] | (token_pos[kv_idx] != token_pos[q_idx])
+    return allowed & gen_gate & gen_same_pos_gate & ~dup_boundary[kv_idx]
+"""
+env2=dict(zip(['document_ids','doc_mod_ids','image_gen_indicators','is_image_token','token_pos','dup_boundary'],[d,m,g,im,pos,dup]));exec(masksrc,env2);maskfn=env2['mask_mod']
 pairs=[];errors=overlap=visible=0
 for Q in blocks:
  for K in blocks:
@@ -66,5 +78,5 @@ assert not point(21,20,0,0) and point(21,21,0,0)
 assert not any(p['k']==29 for p in pairs)
 assert set(types)=={0,1,2}
 audit=dict(length=32768,blocks=len(blocks),documents=8,ranges=len(ranges),range_mismatches=errors,overlap_pairs=overlap,visible_pairs=visible,permutation_bijective=True,reorder_pair_checks=100000,range_types=sorted(set(types.tolist())),mask_source_sha256=hashlib.sha256(masksrc.encode()).hexdigest())
-result=dict(blocks=blocks,order=order,ranges=ranges,pairs=pairs,audit=audit,cases=['纯文字输入 / 输出','多图输入、文字输出','文字到图像','同图 gen / 非 gen：挖对角线','参考图 + 新生成图','重复 position：整块挖空','多张 gen 图互相隔离','重复边界 K 屏蔽'])
+result=dict(blocks=blocks,order=order,ranges=ranges,pairs=pairs,audit=audit,cases=['纯文字输入 / 输出','多图输入、文字输出','文字到图像','抽象边界测试：递增位置扣对角线','参考图 + 新生成图','恒定图像位置：配对块屏蔽','多张 gen 图互相隔离','重复边界 K 屏蔽'])
 (OUT/'dummy-data.js').write_text('const dummyData='+json.dumps(result,ensure_ascii=False,separators=(',',':'))+';\n');(OUT/'dummy-verification.json').write_text(json.dumps(audit,indent=2));print(audit)
