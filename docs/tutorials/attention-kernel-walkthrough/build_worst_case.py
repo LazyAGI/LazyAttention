@@ -1,8 +1,17 @@
 """Read trusted local torch snapshots without requiring torch or executing pickle globals."""
-import pickle,zipfile,io,json,collections,ast,hashlib
+# Captured inputs are not distributed. Pass their workspace explicitly.
+import argparse,sys
 from pathlib import Path
+REPO=Path(__file__).resolve().parents[3]
+sys.path.insert(0,str(REPO))
+from benchmarks.mot_ranges import ranges_from_metadata
+_parser=argparse.ArgumentParser(description=__doc__ or "Export trusted local captured tutorial data")
+_parser.add_argument('--workspace-root',type=Path,required=True,help='Workspace containing the historical artifacts/ capture tree (trusted local inputs only)')
+_args=_parser.parse_args()
+
+import pickle,zipfile,io,json,collections,hashlib
 import numpy as np
-P=Path(__file__).resolve().parent; root=P.parents[1]
+P=Path(__file__).resolve().parent; root=_args.workspace_root
 source=root/'artifacts/fa4_integrated_20261027/workload-audit/rank-5/batch-024-mask.pt'
 z=zipfile.ZipFile(source); prefix=z.namelist()[0].split('/')[0]
 def tensor(storage,offset,shape,stride,*_):
@@ -20,12 +29,11 @@ class Reader(pickle.Unpickler):
  def persistent_load(self,p):return np.frombuffer(z.read(prefix+'/data/'+p[2]),dtype=p[1])
 m=Reader(io.BytesIO(z.read(prefix+'/data.pkl'))).load(); meta=m['metadata']; names=list(meta)
 # Captured metadata is physical GEN-first order, as used by the operator.
-src=(root/'mcore-bridge/src/mcore_bridge/model/modules/mot_magi_attention.py').read_text();fn=next(ast.get_source_segment(src,x) for x in ast.parse(src).body if isinstance(x,ast.FunctionDef) and x.name=='ranges_from_metadata')
-env={'np':np,'METADATA_NAMES':names};exec(fn,env);qr,kr,types=env['ranges_from_metadata'](meta,32640);ranges=np.column_stack([qr,kr,types]).tolist()
-# Recover the pre GEN/UND-partition order.  The partition is stable, so the
+env={'ranges_from_metadata':ranges_from_metadata};qr,kr,types=ranges_from_metadata(meta,32640);ranges=np.column_stack([qr,kr,types]).tolist()
+# Construct a compatible pre GEN/UND-partition order (ties are ambiguous).  The partition is stable, so the
 # relative order inside GEN and UND must be retained.  Merge those two streams
 # by their captured original token position; GEN wins equal-position ties
-# because an image span starts at that position before following text.
+# as a deterministic tie-break convention, not proof of historical order.
 doc_order=[0,1,-1]
 original_order=[]
 for doc in doc_order:

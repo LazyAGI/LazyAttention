@@ -1,10 +1,19 @@
 """Select diverse captured masks and export pre/post GEN partition ranges."""
-import ast,collections,hashlib,io,json,pickle,zipfile
+# Captured inputs are not distributed. Pass their workspace explicitly.
+import argparse,sys
 from pathlib import Path
+REPO=Path(__file__).resolve().parents[3]
+sys.path.insert(0,str(REPO))
+from benchmarks.mot_ranges import ranges_from_metadata
+_parser=argparse.ArgumentParser(description=__doc__ or "Export trusted local captured tutorial data")
+_parser.add_argument('--workspace-root',type=Path,required=True,help='Workspace containing the historical artifacts/ capture tree (trusted local inputs only)')
+_args=_parser.parse_args()
+
+import collections,hashlib,io,json,pickle,zipfile
 import numpy as np
 
 OUT=Path(__file__).resolve().parent
-ROOT=OUT.parents[1]
+ROOT=_args.workspace_root
 AUDIT=ROOT/'artifacts/fa4_integrated_20261027/workload-audit'
 NAMES=('mot_document_ids','mot_doc_mod_ids','mot_image_gen_indicators',
        'mot_is_image_token','mot_token_pos','mot_dup_boundary')
@@ -31,9 +40,7 @@ def load(path):
  z=zipfile.ZipFile(path);r=Reader(io.BytesIO(z.read(next(n for n in z.namelist() if n.endswith('data.pkl')))))
  r.archive=z;r.prefix=z.namelist()[0].split('/')[0];return r.load()
 
-source=(ROOT/'mcore-bridge/src/mcore_bridge/model/modules/mot_magi_attention.py').read_text()
-node=next(x for x in ast.parse(source).body if isinstance(x,ast.FunctionDef) and x.name=='ranges_from_metadata')
-env={'np':np,'METADATA_NAMES':NAMES};exec(ast.get_source_segment(source,node),env)
+env={'ranges_from_metadata':ranges_from_metadata}
 def ranges(meta):
  q,k,t=env['ranges_from_metadata'](meta,len(meta[NAMES[0]]))
  return np.column_stack([q,k,t]).tolist()
@@ -51,7 +58,7 @@ def runs(v):
   if i==len(v) or v[i]!=v[a]:out.append([a,i,int(v[a])]);a=i
  return out
 def restore(meta):
- # Stable merge of the captured GEN and UND streams by original position.
+ # Construct a compatible interleaving; equal positions do not reveal historical order.
  order=[]
  unique=[int(d) for d in np.unique(meta['mot_document_ids'])]
  docs=sorted(d for d in unique if d>=0)+sorted(d for d in unique if d<0)

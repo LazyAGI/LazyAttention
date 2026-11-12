@@ -1,5 +1,14 @@
-import io,pickle,zipfile,collections,json,ast,pathlib,numpy as np
-ROOT=pathlib.Path(__file__).resolve().parents[2]
+# Captured inputs are not distributed. Pass their workspace explicitly.
+import argparse,sys
+from pathlib import Path
+REPO=Path(__file__).resolve().parents[3]
+sys.path.insert(0,str(REPO))
+from benchmarks.mot_ranges import ranges_from_metadata
+_parser=argparse.ArgumentParser(description=__doc__ or "Export trusted local captured tutorial data")
+_parser.add_argument('--workspace-root',type=Path,required=True,help='Workspace containing the historical artifacts/ capture tree (trusted local inputs only)')
+_args=_parser.parse_args()
+import io,pickle,zipfile,collections,json,pathlib,numpy as np
+ROOT=_args.workspace_root
 OUT=pathlib.Path(__file__).parent
 class Reader(pickle.Unpickler):
  def __init__(self,z):
@@ -24,9 +33,7 @@ if __name__=='__main__':
   both=set(m[g & im].tolist()) & set(m[(~g) & im].tolist())
   if both:hits.append((p.name,list(both)))
  print(json.dumps({'files':len(paths),'same_image_gen_and_nongen':hits}))
- src=(ROOT/'mcore-bridge/src/mcore_bridge/model/modules/mot_magi_attention.py').read_text()
- fn=next(ast.get_source_segment(src,x) for x in ast.parse(src).body if isinstance(x,ast.FunctionDef) and x.name=='ranges_from_metadata')
- env={'np':np,'METADATA_NAMES':NAMES};exec(fn,env)
+ env={'ranges_from_metadata':ranges_from_metadata}
  path=next(p for p in paths if p.name=='workload-rank0-step3.pt');w=load(path);meta=w['metadata'];d,m,g,im,pos,dup=[meta[n] for n in NAMES];length=len(d)
  qr,kr,types=env['ranges_from_metadata'](meta,length);ranges=np.column_stack([qr,kr,types]).tolist()
  changes=np.zeros(length+1,bool);changes[[0,-1]]=True
