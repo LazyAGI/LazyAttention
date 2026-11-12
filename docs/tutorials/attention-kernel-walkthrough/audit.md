@@ -1,4 +1,4 @@
-# Tutorial correctness audit — 2026-11-11
+# Tutorial correctness audit — 2026-11-12
 
 The audit covers the nine navigation chapters, both MAGI/FA4 practice tabs,
 shared renderers, generated mask/plan datasets and their exporters. It also
@@ -26,12 +26,19 @@ scope. Vendored KaTeX and the FA4 source snapshots remain reference assets.
   the clean image copy. The latter marks selected boundary tokens whose K
   columns are excluded for every Q. It does not globally hide the clean image
   copy from later text.
-- **Synthetic diagonal holes are not U1 image examples.** The supplementary
-  same-mod/incrementing-position fixture deliberately exercises a general
-  predicate branch. D3 and its MAGI/FA4 consumers are labelled as artificial
-  operator tests. They do not establish how real target copies are laid out.
-  Their numerical ranges are retained so the algorithm demonstrations continue
-  to cover Full, Causal and Inverse-causal slices.
+- **The shared 32K fixture follows U1 image-position rules.** Replace both
+  artificial GEN/non-GEN pairs with GEN followed by a clean target copy,
+  using distinct image-segment IDs and constant shared temporal position.
+  Replace the artificial 128-token image boundary with a single non-image
+  boundary token. All image-image blocks are now either Full or empty.
+  The main mask, MAGI Forward/Backward and FA4 pages use the same regenerated
+  metadata, ranges and plans; the supplementary diagonal-hole scene is removed.
+  The operator's generic inverse-causal representation remains supported, but
+  this U1 teaching fixture generates only Full and Causal ranges.
+- **Practice presets follow semantic examples.** Resolve selections from
+  block identities and current ranges instead of old hard-coded range numbers.
+  Replace hole examples with image self-attention, text causality and reference
+  image conditioning. Blocked target-copy regions generate no MAGI tasks.
 - **Attention information flow is directional.** The architecture diagram now
   says GEN may read permitted UND K/V, while UND cannot read GEN K/V.
 - **Softmax has one denominator per query/head.** For a GEN query, permitted
@@ -80,10 +87,12 @@ python scripts/check_site.py
 
 The model checks exercise the rendered primer's actual predicate, complete
 GEN-to-clean-copy isolation, GEN self/reference access, later-text access,
-boundary and document gates, integer range bands, all 69 dummy ranges' loop
+boundary and document gates, integer range bands, all 71 U1 tutorial ranges' loop
 coverage and sampled-key online softmax. The matrix-chain and full/causal
 attention examples are checked against 144 finite-difference derivatives.
-The 32K export independently compares 64,130,418 visible pairs against range
+Regression checks also require constant image positions, unique segment IDs,
+GEN-before-copy order, whole-block copy isolation, later-text access and valid
+MAGI/FA4 presets. The 32K export independently compares 60,245,439 visible pairs against range
 coverage, checks for overlaps and checks 100,000 reordered pairs.
 
 Historical captures are not distributed. For a trusted local workspace with

@@ -90,4 +90,39 @@ for(let ri=0;ri<dummyData.ranges.length;ri++){
  }
 }
 `,scope);
-console.log('All 69 dummy ranges: forward/backward traversal covers visible tiles; online softmax agrees with dense sampled-key normalization.');
+console.log(`All ${vm.runInContext('dummyData.ranges.length',scope)} U1 tutorial ranges: traversal covers visible tiles; online softmax agrees with dense sampled-key normalization.`);
+
+// The shared lesson fixture must contain U1 image blocks, never diagonal-hole cases.
+vm.runInContext(`
+if(dummyData.ranges.some(r=>r[4]===2))throw Error('inverse-causal range leaked into U1 tutorial');
+const images=DB.filter(b=>b.image);
+if(new Set(images.map(b=>b.mod)).size!==images.length||images.some(b=>b.linear))throw Error('invalid image segment identity/position');
+for(const q of images)for(const k of images){
+ const pair=dummyData.pairs.find(p=>p.q===q.id&&p.k===k.id);
+ const expected=u1Allowed(q,k)?q.length*k.length:0;
+ if((pair?.visible||0)!==expected)throw Error('image-image block must be wholly allowed or wholly excluded');
+}
+for(const copy of DB.filter(b=>b.copied_from!=null)){
+ const gen=DB[copy.copied_from];
+ if(!gen.gen||copy.gen||copy.oldStart<=gen.oldStart||gen.pos!==copy.pos||gen.length!==copy.length)throw Error('invalid target-copy pair');
+ if(dummyData.pairs.some(p=>p.q===gen.id&&p.k===copy.id))throw Error('target copy generated a MAGI range');
+ const later=DB[copy.id+1];
+ if(!dummyData.pairs.some(p=>p.q===later.id&&p.k===copy.id&&p.visible===later.length*copy.length))throw Error('later text cannot read clean copy');
+}
+for(const name of ['self','causal','reference']){
+ const ri=lessonExampleRange(name);if(ri<0||ri>=dummyData.ranges.length)throw Error('stale MAGI preset');
+}
+`,scope);
+load('fa4-data.js');load('fa4-lesson.js');
+vm.runInContext(`
+let page=5;
+for(const back of [false,true]){
+ page=back?6:5;
+ for(const name of ['self','causal','boundary']){
+  faState().tile=faExampleTile(name);
+  const plan=faPlan();
+  if(!plan||!plan.partial.length&&!plan.full.length)throw Error('stale FA4 preset');
+ }
+}
+`,scope);
+console.log('All image-image blocks are Full or empty; clean copies have no GEN ranges; MAGI/FA4 presets resolve against regenerated data.');
